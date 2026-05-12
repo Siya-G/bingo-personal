@@ -1,0 +1,638 @@
+"use client";
+
+import { FormEvent, useCallback, useEffect, useState, startTransition } from "react";
+import { BingoAgentPanel } from "@/components/game/bingo-agent-panel";
+import { HostAuditTrail } from "@/components/host/host-audit-trail";
+import { HostLeaderboardPreview } from "@/components/host/host-leaderboard-preview";
+import { HostPrizeNotifications } from "@/components/host/host-prize-notifications";
+import { ErrorMessage } from "@/components/ui/error-message";
+import { LoadingState } from "@/components/ui/loading-state";
+import {
+  callNextItem,
+  generateGameCards,
+  generateGameItems,
+  getAuditEvents,
+  getCalledItems,
+  getLeaderboard,
+  getPrizeNotifications,
+  markPrizeNotificationDisplayed,
+  startGame,
+  type GeneratedBingoItem,
+  type GenerateGameItemsResult,
+} from "@/lib/api/games";
+import { readHostPinForGame, saveHostPinForGame } from "@/lib/host-credentials";
+import { mergeCalledItems } from "@/lib/merge-called-items";
+import { useGameSocket } from "@/hooks/useGameSocket";
+import { useSpeechSynthesis } from "@/hooks/useSpeechSynthesis";
+import type { AuditEvent } from "@/types/audit";
+import type { Game } from "@/types/game";
+import type { CalledItem } from "@/types/gameplay";
+import type { GameLeaderboard } from "@/types/leaderboard";
+import type { PrizeNotification } from "@/types/prize";
+
+function formatSocketStatus(status: string) {
+  switch (status) {
+    case "connecting":
+      return "WebSocket: connecting…";
+    case "open":
+      return "WebSocket: connected (live)";
+    case "closed":
+      return "WebSocket: reconnecting…";
+    case "error":
+      return "WebSocket: error — retrying…";
+    default:
+      return null;
+  }
+}
+
+export function GameplayControls() {
+  const speech = useSpeechSynthesis();
+  const [gameId, setGameId] = useState("");
+  const [hostPin, setHostPin] = useState("");
+  const [game, setGame] = useState<Game | null>(null);
+  const [calledItems, setCalledItems] = useState<CalledItem[]>([]);
+  const [leaderboard, setLeaderboard] = useState<GameLeaderboard | null>(null);
+  const [leaderboardError, setLeaderboardError] = useState<string | null>(null);
+  const [leaderboardLoading, setLeaderboardLoading] = useState(false);
+  const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditError, setAuditError] = useState<string | null>(null);
+  const [prizeNotifications, setPrizeNotifications] = useState<PrizeNotification[]>(
+    [],
+  );
+  const [prizeLoading, setPrizeLoading] = useState(false);
+  const [prizeError, setPrizeError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isStarting, setIsStarting] = useState(false);
+  const [isCalling, setIsCalling] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isGeneratingItems, setIsGeneratingItems] = useState(false);
+  const [isGeneratingCards, setIsGeneratingCards] = useState(false);
+  const [generatedItemRows, setGeneratedItemRows] = useState<GeneratedBingoItem[]>(
+    [],
+  );
+  const [itemPoolMeta, setItemPoolMeta] = useState<
+    Pick<GenerateGameItemsResult, "target_count" | "actual_count" | "minimum_count" | "warning">
+    | null
+  >(null);
+
+  const { status: wsStatus, lastEvent } = useGameSocket(gameId);
+
+  const visibleGeneratedRows = generatedItemRows.filter(
+    (row) => String(row.game_id) === gameId.trim(),
+  );
+
+  useEffect(() => {
+    const trimmed = gameId.trim();
+    startTransition(() => {
+      setHostPin(trimmed ? readHostPinForGame(trimmed) ?? "" : "");
+    });
+  }, [gameId]);
+
+  useEffect(() => {
+    startTransition(() => {
+      setItemPoolMeta(null);
+    });
+  }, [gameId]);
+
+  const refreshLeaderboard = useCallback(async (nextGameId: string) => {
+    const trimmed = nextGameId.trim();
+    if (!trimmed) {
+      setLeaderboard(null);
+      setLeaderboardError(null);
+      return;
+    }
+
+    setLeaderboardLoading(true);
+    setLeaderboardError(null);
+    try {
+      const data = await getLeaderboard(trimmed);
+      setLeaderboard(data);
+    } catch (caughtError) {
+      setLeaderboard(null);
+      setLeaderboardError(
+        readCaughtError(caughtError, "Unable to load leaderboard."),
+      );
+    } finally {
+      setLeaderboardLoading(false);
+    }
+  }, []);
+
+  const refreshAudit = useCallback(
+    async (nextGameId: string, pin: string | null | undefined) => {
+      const trimmed = nextGameId.trim();
+      if (!trimmed) {
+        setAuditEvents([]);
+        setAuditError(null);
+        return;
+      }
+
+      setAuditLoading(true);
+      setAuditError(null);
+      try {
+        const rows = await getAuditEvents(trimmed, pin);
+        setAuditEvents(rows);
+      } catch (caughtError) {
+        setAuditEvents([]);
+        setAuditError(
+          readCaughtError(caughtError, "Unable to load audit trail."),
+        );
+      } finally {
+        setAuditLoading(false);
+      }
+    },
+    [],
+  );
+
+  const refreshPrizes = useCallback(async (nextGameId: string) => {
+    const trimmed = nextGameId.trim();
+    if (!trimmed) {
+      setPrizeNotifications([]);
+      setPrizeError(null);
+      return;
+    }
+
+    setPrizeLoading(true);
+    setPrizeError(null);
+    try {
+      const rows = await getPrizeNotifications(trimmed);
+      setPrizeNotifications(rows);
+    } catch (caughtError) {
+      setPrizeNotifications([]);
+      setPrizeError(
+        readCaughtError(caughtError, "Unable to load prize notifications."),
+      );
+    } finally {
+      setPrizeLoading(false);
+    }
+  }, []);
+
+  // First paint for a new game ID: hydrate from REST once (no polling).
+  useEffect(() => {
+    if (!gameId.trim()) {
+      startTransition(() => {
+        setLeaderboard(null);
+        setLeaderboardError(null);
+        setAuditEvents([]);
+        setAuditError(null);
+        setPrizeNotifications([]);
+        setPrizeError(null);
+      });
+      return;
+    }
+
+    const pin = hostPin.trim() || null;
+    const kickoff = setTimeout(() => {
+      void refreshLeaderboard(gameId);
+      void refreshAudit(gameId, pin);
+      void refreshPrizes(gameId);
+    }, 0);
+    return () => clearTimeout(kickoff);
+  }, [gameId, hostPin, refreshLeaderboard, refreshAudit, refreshPrizes]);
+
+  // WebSocket pushes: new calls, podium changes, game finished.
+  useEffect(() => {
+    if (!lastEvent) {
+      return;
+    }
+
+    queueMicrotask(() => {
+      switch (lastEvent.type) {
+        case "NEW_CALLED_ITEM": {
+          const item = lastEvent.payload;
+          setCalledItems((prev) => mergeCalledItems(prev, item));
+          break;
+        }
+        case "LEADERBOARD_UPDATED": {
+          const payload = lastEvent.payload;
+          setLeaderboard({
+            game_id: payload.game_id,
+            game_title: payload.game_title,
+            game_status: payload.game_status,
+            winners: payload.winners,
+          });
+          setLeaderboardError(null);
+          break;
+        }
+        case "GAME_COMPLETED": {
+          setGame((current) =>
+            current ? { ...current, status: "COMPLETED" } : current,
+          );
+          setLeaderboard((current) =>
+            current ? { ...current, game_status: "COMPLETED" } : current,
+          );
+          break;
+        }
+        case "AUDIT_EVENT_CREATED": {
+          const payload = lastEvent.payload;
+          setAuditEvents((prev) => {
+            if (prev.some((row) => row.id === payload.id)) {
+              return prev;
+            }
+            const row: AuditEvent = {
+              id: payload.id,
+              event_type: payload.event_type,
+              message: payload.message,
+              metadata: payload.metadata,
+              created_at: payload.created_at,
+            };
+            return [row, ...prev];
+          });
+          setAuditError(null);
+          break;
+        }
+        case "PRIZE_NOTIFICATION_CREATED": {
+          const payload = lastEvent.payload;
+          setPrizeNotifications((prev) => {
+            if (prev.some((row) => row.id === payload.id)) {
+              return prev;
+            }
+            const row: PrizeNotification = {
+              id: payload.id,
+              game_id: payload.game_id,
+              player_id: payload.player_id,
+              player_name: payload.player_name,
+              winner_id: payload.winner_id,
+              rank: payload.rank,
+              message: payload.message,
+              status: payload.status,
+              created_at: payload.created_at,
+            };
+            return [row, ...prev];
+          });
+          setPrizeError(null);
+          break;
+        }
+        default:
+          break;
+      }
+    });
+  }, [lastEvent]);
+
+  async function refreshCalledItems(nextGameId = gameId) {
+    if (!nextGameId.trim()) {
+      setError("Enter a game ID before refreshing called items.");
+      return;
+    }
+
+    setError(null);
+    setIsRefreshing(true);
+    try {
+      const items = await getCalledItems(nextGameId);
+      setCalledItems(items);
+      await refreshLeaderboard(nextGameId);
+      await refreshAudit(nextGameId, hostPin.trim() || null);
+      await refreshPrizes(nextGameId);
+    } catch (caughtError) {
+      setError(readCaughtError(caughtError, "Unable to load called items."));
+    } finally {
+      setIsRefreshing(false);
+    }
+  }
+
+  async function handleStartGame() {
+    if (!gameId.trim()) {
+      setError("Enter a game ID before starting.");
+      return;
+    }
+
+    setError(null);
+    setIsStarting(true);
+    try {
+      const startedGame = await startGame(gameId, hostPin.trim() || null);
+      setGame(startedGame);
+      await refreshCalledItems(gameId);
+    } catch (caughtError) {
+      setError(readCaughtError(caughtError, "Unable to start game."));
+    } finally {
+      setIsStarting(false);
+    }
+  }
+
+  async function handleCallNext() {
+    if (!gameId.trim()) {
+      setError("Enter a game ID before calling the next item.");
+      return;
+    }
+
+    setError(null);
+    setIsCalling(true);
+    try {
+      const item = await callNextItem(gameId, hostPin.trim() || null);
+      setCalledItems((currentItems) => mergeCalledItems(currentItems, item));
+      speech.speakCalledItem(item);
+    } catch (caughtError) {
+      setError(readCaughtError(caughtError, "Unable to call next item."));
+    } finally {
+      setIsCalling(false);
+    }
+  }
+
+  async function handleGenerateItems() {
+    const gid = gameId.trim();
+    if (!gid) {
+      setError("Enter a game ID before generating items.");
+      return;
+    }
+    setError(null);
+    setItemPoolMeta(null);
+    setIsGeneratingItems(true);
+    try {
+      const result = await generateGameItems(gid, hostPin.trim() || null);
+      setGeneratedItemRows((prev) => [
+        ...prev.filter((r) => String(r.game_id) !== gid),
+        ...result.items,
+      ]);
+      setItemPoolMeta({
+        target_count: result.target_count,
+        actual_count: result.actual_count,
+        minimum_count: result.minimum_count,
+        warning: result.warning,
+      });
+      await refreshCalledItems(gid);
+    } catch (caughtError) {
+      setGeneratedItemRows([]);
+      setItemPoolMeta(null);
+      const detail = readCaughtError(caughtError, "").trim();
+      setError(
+        `AI item generation failed. Check backend OPENAI_API_KEY or try mock mode.${
+          detail ? ` ${detail}` : ""
+        }`,
+      );
+    } finally {
+      setIsGeneratingItems(false);
+    }
+  }
+
+  async function handleGenerateCards() {
+    const gid = gameId.trim();
+    if (!gid) {
+      setError("Enter a game ID before generating cards.");
+      return;
+    }
+    setError(null);
+    setIsGeneratingCards(true);
+    try {
+      await generateGameCards(gid, hostPin.trim() || null);
+      await refreshCalledItems(gid);
+    } catch (caughtError) {
+      setError(readCaughtError(caughtError, "Unable to generate cards."));
+    } finally {
+      setIsGeneratingCards(false);
+    }
+  }
+
+  function handleRefresh(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void refreshCalledItems();
+  }
+
+  function persistHostPin() {
+    const gid = gameId.trim();
+    if (gid && hostPin.trim()) {
+      saveHostPinForGame(gid, hostPin.trim());
+    }
+  }
+
+  async function handleMarkPrizeDisplayed(notificationId: number) {
+    const gid = gameId.trim();
+    if (!gid) {
+      return;
+    }
+    try {
+      const updated = await markPrizeNotificationDisplayed(
+        gid,
+        notificationId,
+        hostPin.trim() || null,
+      );
+      setPrizeNotifications((prev) =>
+        prev.map((row) => (row.id === updated.id ? updated : row)),
+      );
+      setPrizeError(null);
+    } catch (caughtError) {
+      setPrizeError(
+        readCaughtError(caughtError, "Unable to update prize status."),
+      );
+    }
+  }
+
+  const liveStatus = leaderboard?.game_status ?? game?.status ?? null;
+  const isActive = liveStatus === "ACTIVE";
+  const isCompleted = liveStatus === "COMPLETED";
+  const socketLine = gameId.trim() ? formatSocketStatus(wsStatus) : null;
+
+  return (
+    <div className="rounded-3xl bg-slate-950/50 p-5 sm:p-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 className="text-2xl font-black text-white">Live Gameplay</h2>
+          <p className="mt-2 text-sm text-slate-300">
+            Start a game and call items from the generated Bingo list. Live
+            updates use a WebSocket after the first load — use Refresh if you
+            need to resync from the server.
+          </p>
+          <p className="mt-2 text-xs text-slate-500">
+            {/* MVP: PIN + headers are not a substitute for production SSO / RBAC. */}
+            Host actions require the PIN you set at game creation. It is stored
+            in this browser tab only (sessionStorage).
+          </p>
+        </div>
+        <span className="rounded-full bg-fuchsia-400/15 px-4 py-2 text-sm font-bold text-fuchsia-100">
+          {liveStatus ?? "Waiting for game ID"}
+        </span>
+      </div>
+
+      {socketLine ? (
+        <p className="mt-3 text-xs font-semibold text-cyan-200/90">{socketLine}</p>
+      ) : null}
+
+      <form className="mt-6 grid gap-3 sm:grid-cols-[1fr_auto]" onSubmit={handleRefresh}>
+        <input
+          className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-white outline-none placeholder:text-slate-500 focus:border-yellow-300/70"
+          inputMode="numeric"
+          onChange={(event) => setGameId(event.target.value)}
+          placeholder="Game ID"
+          type="text"
+          value={gameId}
+        />
+        <button
+          className="rounded-full border border-white/15 bg-white/10 px-5 py-3 text-sm font-black uppercase tracking-[0.18em] text-white transition hover:border-white/30 hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-60"
+          disabled={isRefreshing}
+          type="submit"
+        >
+          {isRefreshing ? "Refreshing..." : "Refresh Calls"}
+        </button>
+      </form>
+
+      <label className="mt-4 block">
+        <span className="text-xs font-black uppercase tracking-[0.18em] text-yellow-200">
+          Host PIN
+        </span>
+        <input
+          autoComplete="off"
+          className="mt-2 w-full rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-white outline-none placeholder:text-slate-500 focus:border-yellow-300/70"
+          onBlur={persistHostPin}
+          onChange={(event) => setHostPin(event.target.value)}
+          placeholder="PIN from create-game step"
+          type="password"
+          value={hostPin}
+        />
+      </label>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <button
+          className="rounded-full border border-white/15 bg-white/10 px-5 py-3 text-sm font-black uppercase tracking-[0.16em] text-white transition hover:border-white/30 hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-60"
+          disabled={isGeneratingItems || !gameId.trim()}
+          onClick={() => void handleGenerateItems()}
+          type="button"
+        >
+          {isGeneratingItems ? "Generating items with AI..." : "Generate items"}
+        </button>
+        <button
+          className="rounded-full border border-white/15 bg-white/10 px-5 py-3 text-sm font-black uppercase tracking-[0.16em] text-white transition hover:border-white/30 hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-60"
+          disabled={isGeneratingCards || !gameId.trim()}
+          onClick={() => void handleGenerateCards()}
+          type="button"
+        >
+          {isGeneratingCards ? "Creating cards..." : "Generate cards"}
+        </button>
+      </div>
+
+      <LoadingState
+        active={isGeneratingItems}
+        label="Generating items with AI..."
+      />
+      <LoadingState
+        active={isGeneratingCards}
+        label="Creating cards…"
+      />
+
+      {itemPoolMeta ? (
+        <div className="mt-4 rounded-2xl border border-slate-600/35 bg-slate-900/45 p-4 text-sm text-slate-300">
+          <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">
+            Item pool
+          </p>
+          <p className="mt-2 text-slate-200">
+            Target:{" "}
+            <strong className="text-white">{itemPoolMeta.target_count}</strong>
+            <span className="text-slate-500"> · </span>
+            Generated:{" "}
+            <strong className="text-emerald-200">{itemPoolMeta.actual_count}</strong>
+            <span className="text-slate-500"> · </span>
+            Minimum:{" "}
+            <strong className="text-slate-100">{itemPoolMeta.minimum_count}</strong>
+          </p>
+          {itemPoolMeta.warning ? (
+            <p
+              className="mt-3 rounded-xl border border-amber-400/40 bg-amber-500/10 px-3 py-2.5 text-amber-50"
+              role="status"
+            >
+              {itemPoolMeta.warning}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {visibleGeneratedRows.length > 0 ? (
+        <div className="mt-4 max-h-72 overflow-auto rounded-2xl border border-emerald-400/25 bg-slate-900/55 p-4">
+          <p className="text-xs font-black uppercase tracking-[0.2em] text-emerald-200">
+            Generated word pool ({visibleGeneratedRows.length})
+          </p>
+          <p className="mt-1 text-xs text-slate-400">
+            Shared pool for this game. Each player&apos;s 5×5 card uses{" "}
+            <strong className="text-slate-200">25</strong> random picks from this list
+            (calls still draw from the full pool).
+          </p>
+          <ul className="mt-3 space-y-2.5 text-sm text-slate-200">
+            {visibleGeneratedRows.map((row) => (
+              <li
+                key={row.id}
+                className="border-b border-white/5 pb-2.5 last:border-0 last:pb-0"
+              >
+                <span className="font-bold text-white">{row.word}</span>
+                <span className="text-slate-500"> — </span>
+                <span className="text-slate-300">{row.description}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <button
+          className="rounded-full bg-yellow-300 px-5 py-4 text-sm font-black uppercase tracking-[0.18em] text-slate-950 shadow-lg shadow-yellow-500/30 transition hover:bg-yellow-200 disabled:cursor-not-allowed disabled:opacity-60"
+          disabled={isStarting || isCompleted}
+          onClick={() => void handleStartGame()}
+          type="button"
+        >
+          {isStarting ? "Starting game…" : "Start Game"}
+        </button>
+        <button
+          className="rounded-full bg-fuchsia-400 px-5 py-4 text-sm font-black uppercase tracking-[0.18em] text-slate-950 shadow-lg shadow-fuchsia-500/30 transition hover:bg-fuchsia-300 disabled:cursor-not-allowed disabled:opacity-60"
+          disabled={!isActive || isCalling || isCompleted}
+          onClick={() => void handleCallNext()}
+          type="button"
+        >
+          {isCalling
+            ? "Calling next item…"
+            : isCompleted
+              ? "Game completed"
+              : "Call Next Item"}
+        </button>
+      </div>
+
+      {isCompleted ? (
+        <div className="mt-5 rounded-2xl border border-fuchsia-400/35 bg-fuchsia-500/10 p-4 text-center text-sm font-bold text-fuchsia-100">
+          This game is completed — calling more items is disabled.
+        </div>
+      ) : null}
+
+      <div className="mt-5">
+        <ErrorMessage message={error} title="Something went wrong" />
+      </div>
+
+      <div className="mt-8 border-t border-white/10 pt-8">
+        <HostLeaderboardPreview
+          error={leaderboardError}
+          gameId={gameId.trim()}
+          leaderboard={leaderboard}
+          loading={leaderboardLoading}
+          liveHint="Standings update live over the WebSocket when players claim Bingo."
+        />
+      </div>
+
+      <div className="mt-8 border-t border-white/10 pt-8">
+        <HostAuditTrail
+          error={auditError}
+          events={auditEvents}
+          loading={auditLoading}
+        />
+      </div>
+
+      <div className="mt-8 border-t border-white/10 pt-8">
+        <HostPrizeNotifications
+          error={prizeError}
+          gameId={gameId.trim()}
+          loading={prizeLoading}
+          notifications={prizeNotifications}
+          onMarkDisplayed={handleMarkPrizeDisplayed}
+        />
+      </div>
+
+      {isActive || calledItems.length > 0 ? (
+        <div className="mt-8">
+          <BingoAgentPanel items={calledItems} />
+        </div>
+      ) : (
+        <p className="mt-8 rounded-2xl border border-white/10 bg-slate-950/45 p-4 text-sm text-slate-300">
+          Start the game to open the Bingo Agent panel with narration and call
+          history.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function readCaughtError(caughtError: unknown, fallback: string) {
+  return caughtError instanceof Error ? caughtError.message : fallback;
+}
