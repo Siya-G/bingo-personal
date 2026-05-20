@@ -93,6 +93,11 @@ class Game(Base):
         back_populates="game",
         cascade="all, delete-orphan",
     )
+    moderation_events: Mapped[list["ModerationEvent"]] = relationship(
+        "ModerationEvent",
+        back_populates="game",
+        cascade="all, delete-orphan",
+    )
 
     @property
     def winning_patterns(self) -> list[str]:

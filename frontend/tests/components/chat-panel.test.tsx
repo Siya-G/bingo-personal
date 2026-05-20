@@ -293,6 +293,64 @@ describe("ChatPanel", () => {
     expect(within(row).getByText(/everest was called/i)).toBeInTheDocument();
   });
 
+  it("shows a moderation notice (and keeps the draft) when the API returns a structured block response", async () => {
+    let savedCalls = 0;
+    globalThis.fetch = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (init?.method === "POST" && url.endsWith("/chat")) {
+        savedCalls += 1;
+        return jsonResponse(
+          {
+            detail: {
+              error: "Message blocked by chat moderation.",
+              reason: "inappropriate_language",
+            },
+          },
+          { ok: false, status: 422 },
+        );
+      }
+      return jsonResponse([]);
+    });
+
+    const user = userEvent.setup();
+    render(
+      <ChatPanel
+        gameId={42}
+        role="HOST"
+        senderName="Host"
+        senderId={null}
+        hostPin="demo-pin-1234"
+      />,
+    );
+
+    await user.type(screen.getByLabelText(/message/i), "something inappropriate");
+    await user.click(screen.getByRole("button", { name: /send/i }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/blocked by chat moderation/i);
+    // Draft survives so the user can edit and resend.
+    expect(screen.getByLabelText(/message/i)).toHaveValue("something inappropriate");
+    // No message row was added optimistically.
+    expect(screen.queryByTestId("chat-message")).toBeNull();
+    expect(savedCalls).toBe(1);
+  });
+
+  it("renders the workplace-appropriate helper text below the input", async () => {
+    globalThis.fetch = vi.fn().mockImplementation(() => jsonResponse([]));
+    render(
+      <ChatPanel
+        gameId={42}
+        role="PLAYER"
+        senderName="Alex"
+        senderId={7}
+        playerSession="player-token"
+      />,
+    );
+    expect(
+      await screen.findByText(/keep chat respectful and workplace-appropriate/i),
+    ).toBeInTheDocument();
+  });
+
   it("shows the server's error detail when sending fails (and keeps the draft)", async () => {
     globalThis.fetch = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input.toString();

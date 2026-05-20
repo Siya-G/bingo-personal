@@ -21,12 +21,18 @@ from app.database.connection import get_db
 from app.models import Player
 from app.schemas.chat import ChatMessageCreate, ChatMessageResponse
 from app.services.chat import (
+    ChatModerationBlocked,
     ChatValidationError,
     create_chat_message,
     list_chat_messages,
+    record_moderation_event,
 )
 from app.services.game_lookup import get_game_or_404
 from app.services.secret_hashes import verify_secret
+
+# Public-facing wording — kept generic so we don't reveal which heuristic
+# matched (that goes to the moderation audit table instead).
+MODERATION_BLOCKED_MESSAGE = "Message blocked by chat moderation."
 
 router = APIRouter(prefix="/games", tags=["chat"])
 
@@ -149,4 +155,30 @@ def post_chat_message(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
+        ) from exc
+    except ChatModerationBlocked as exc:
+        # Record a moderation audit row so the host/admin can review the
+        # original content out-of-band. Blocked messages are NEVER saved to
+        # the normal chat_messages table or broadcast over WebSocket.
+        try:
+            record_moderation_event(
+                db=db,
+                game_id=game_id,
+                sender_role=payload.sender_role,
+                sender_name=payload.sender_name,
+                sender_id=sender_id,
+                original_message=payload.message,
+                decision=exc.decision,
+            )
+        except Exception:  # pragma: no cover - audit is best-effort
+            # Even if auditing fails we still refuse the message; the chat
+            # route must fail closed on blocked content.
+            pass
+
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": MODERATION_BLOCKED_MESSAGE,
+                "reason": exc.decision.reason or "inappropriate_language",
+            },
         ) from exc

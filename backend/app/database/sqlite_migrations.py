@@ -119,3 +119,32 @@ def apply_sqlite_runtime_migrations(engine: Engine) -> None:
                     "ON chat_messages (game_id)"
                 )
             )
+
+    # Moderation audit table — never shown to players. Blocked messages are
+    # stored here instead of in ``chat_messages`` so they can be reviewed by
+    # the host/admin out-of-band without leaking into room history.
+    if not inspect(engine).has_table("chat_moderation_events"):
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS chat_moderation_events (
+                        id INTEGER PRIMARY KEY,
+                        game_id INTEGER NOT NULL REFERENCES games (id) ON DELETE CASCADE,
+                        sender_id INTEGER,
+                        sender_name VARCHAR(120) NOT NULL,
+                        sender_role VARCHAR(16) NOT NULL,
+                        original_message VARCHAR(500) NOT NULL,
+                        reason VARCHAR(64) NOT NULL,
+                        detail VARCHAR(240),
+                        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_chat_moderation_events_game_id "
+                    "ON chat_moderation_events (game_id)"
+                )
+            )

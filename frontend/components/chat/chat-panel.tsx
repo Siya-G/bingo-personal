@@ -10,7 +10,11 @@ import {
   useState,
 } from "react";
 
-import { getChatHistory, sendChatMessage } from "@/lib/api/chat";
+import {
+  ChatModerationError,
+  getChatHistory,
+  sendChatMessage,
+} from "@/lib/api/chat";
 import { useGameSocket } from "@/hooks/useGameSocket";
 import { CHAT_MESSAGE_MAX_LENGTH, type ChatMessage } from "@/types/chat";
 
@@ -227,11 +231,20 @@ export function ChatPanel(props: ChatPanelProps) {
         // Keep focus in the input for rapid replies.
         inputRef.current?.focus();
       } catch (err) {
-        setSendError(
-          err instanceof Error
-            ? err.message
-            : "Unable to send your message. Try again.",
-        );
+        if (err instanceof ChatModerationError) {
+          // Sender-only notice. The blocked content is NOT added to the chat
+          // list and the draft stays so the user can edit + retry.
+          setSendError(
+            "Your message was blocked by chat moderation. " +
+              "Please rephrase before sending.",
+          );
+        } else {
+          setSendError(
+            err instanceof Error
+              ? err.message
+              : "Unable to send your message. Try again.",
+          );
+        }
       } finally {
         setIsSending(false);
       }
@@ -372,6 +385,10 @@ export function ChatPanel(props: ChatPanelProps) {
           {sendError}
         </p>
       ) : null}
+
+      <p className="mt-2 text-[10px] font-semibold text-slate-500">
+        Please keep chat respectful and workplace-appropriate.
+      </p>
     </section>
   );
 }

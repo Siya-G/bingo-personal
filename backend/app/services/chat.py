@@ -13,13 +13,18 @@ from typing import Sequence
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import ChatMessage
+from app.models import ChatMessage, ModerationEvent
 from app.models.chat import (
     CHAT_MESSAGE_MAX_LENGTH,
     CHAT_ROLES,
     CHAT_SENDER_NAME_MAX_LENGTH,
+    MODERATION_DETAIL_MAX_LENGTH,
 )
 from app.schemas.chat import ChatMessageResponse, SenderRole
+from app.services.chat_moderation import (
+    ModerationDecision,
+    moderate_chat_message,
+)
 from app.services.websocket_manager import schedule_broadcast
 
 logger = logging.getLogger(__name__)
@@ -31,6 +36,21 @@ class ChatValidationError(ValueError):
     The chat route maps this to ``422`` so the frontend can surface the
     underlying reason ("message is empty", "too long", ...) directly.
     """
+
+
+class ChatModerationBlocked(Exception):
+    """Raised when the moderation pipeline rejects a chat message.
+
+    The chat route catches this and returns a 422 with a structured detail
+    payload (``error`` + ``reason``) so the frontend can show a sender-only
+    moderation notice without leaking the blocked content to the room.
+    """
+
+    def __init__(self, decision: ModerationDecision) -> None:
+        super().__init__(
+            f"Message blocked by chat moderation (reason={decision.reason})"
+        )
+        self.decision = decision
 
 
 def _normalize_message(raw: str) -> str:
@@ -87,6 +107,39 @@ def _broadcast(message: ChatMessageResponse) -> None:
         )
 
 
+def record_moderation_event(
+    *,
+    db: Session,
+    game_id: int,
+    sender_role: str,
+    sender_name: str,
+    sender_id: int | None,
+    original_message: str,
+    decision: ModerationDecision,
+) -> ModerationEvent:
+    """Persist a blocked-message audit row. Never appears in chat history."""
+    clean_name = (sender_name or "").strip()[:CHAT_SENDER_NAME_MAX_LENGTH] or "Unknown"
+    safe_original = (original_message or "")[:CHAT_MESSAGE_MAX_LENGTH]
+    detail = (
+        decision.detail[:MODERATION_DETAIL_MAX_LENGTH]
+        if decision.detail is not None
+        else None
+    )
+    row = ModerationEvent(
+        game_id=game_id,
+        sender_id=sender_id,
+        sender_name=clean_name,
+        sender_role=sender_role,
+        original_message=safe_original,
+        reason=decision.reason or "inappropriate_language",
+        detail=detail,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
 def create_chat_message(
     *,
     db: Session,
@@ -96,10 +149,16 @@ def create_chat_message(
     sender_id: int | None,
     message: str,
 ) -> ChatMessageResponse:
-    """Validate, persist, broadcast — used by HTTP and by SYSTEM helpers.
+    """Validate, moderate, persist, broadcast — used by HTTP and SYSTEM helpers.
 
     Callers must ensure the game exists; the route layer enforces that with
     ``get_game_or_404`` so we don't redundantly hit the DB here.
+
+    Moderation runs *before* persistence. When the decision is "block" we
+    raise :class:`ChatModerationBlocked` with the decision so the route layer
+    can both record an audit event and return a structured 422 response. The
+    blocked message is never written to ``chat_messages`` and never reaches
+    the WebSocket broadcaster.
     """
     if sender_role not in CHAT_ROLES:
         raise ChatValidationError(
@@ -107,6 +166,13 @@ def create_chat_message(
         )
     clean_message = _normalize_message(message)
     clean_name = _normalize_sender_name(sender_name)
+
+    decision = moderate_chat_message(
+        message=clean_message,
+        sender_role=sender_role,
+    )
+    if not decision.allowed:
+        raise ChatModerationBlocked(decision)
 
     row = ChatMessage(
         game_id=game_id,
@@ -155,8 +221,10 @@ def create_system_chat_message(
 ) -> ChatMessageResponse | None:
     """Wrapper used by game/gameplay routes for "player joined", "Bingo!", etc.
 
-    Returns ``None`` (instead of raising) when validation fails — system events
-    are best-effort and must not break the underlying action.
+    Returns ``None`` (instead of raising) when validation/moderation fails —
+    system events are best-effort and must not break the underlying action.
+    Moderation still runs against SYSTEM messages so a bug that injects raw
+    HTML never reaches the DB.
     """
     try:
         return create_chat_message(
@@ -174,6 +242,14 @@ def create_system_chat_message(
             message,
         )
         return None
+    except ChatModerationBlocked as exc:
+        logger.warning(
+            "Blocked SYSTEM chat message game_id=%s reason=%s message=%r",
+            game_id,
+            exc.decision.reason,
+            message,
+        )
+        return None
     except Exception:
         logger.exception(
             "Unexpected error creating SYSTEM chat message game_id=%s", game_id
@@ -182,8 +258,10 @@ def create_system_chat_message(
 
 
 __all__ = [
+    "ChatModerationBlocked",
     "ChatValidationError",
     "create_chat_message",
     "create_system_chat_message",
     "list_chat_messages",
+    "record_moderation_event",
 ]
