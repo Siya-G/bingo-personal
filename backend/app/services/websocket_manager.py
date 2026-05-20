@@ -156,6 +156,21 @@ def notify_audit_event_created(game_id: int, payload: dict[str, Any]) -> None:
     )
 
 
+def notify_cards_generated(game_id: int, item_count: int, card_count: int) -> None:
+    """Tell every player tab to refetch its card (waiting-room → playing)."""
+    schedule_broadcast(
+        game_id,
+        {
+            "type": "CARDS_GENERATED",
+            "payload": {
+                "game_id": game_id,
+                "item_count": item_count,
+                "card_count": card_count,
+            },
+        },
+    )
+
+
 def notify_prize_notification_created(game_id: int, payload: dict[str, Any]) -> None:
     """Tell clients to show the on-screen winner / prize banner."""
     schedule_broadcast(
@@ -171,6 +186,7 @@ __all__ = [
     "notify_audit_event_created",
     "notify_bingo_claimed",
     "notify_card_cell_updated",
+    "notify_cards_generated",
     "notify_game_completed",
     "notify_leaderboard_updated",
     "notify_new_called_item",

@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Self
 
-from pydantic import Field, model_validator
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Always load ``backend/.env`` (next to the ``app/`` package), not ``./.env`` from cwd.
@@ -32,12 +32,18 @@ class Settings(BaseSettings):
     # Public Bingo UI origin for invite links (no secrets).
     frontend_base_url: str = "http://127.0.0.1:3000"
     # Optional SMTP — when ``smtp_host`` is empty, invites stay preview-only.
+    # Both ``SMTP_USERNAME`` (preferred) and legacy ``SMTP_USER`` are accepted.
     smtp_host: str = ""
     smtp_port: int = 587
-    smtp_user: str = ""
+    smtp_username: str = Field(
+        default="",
+        validation_alias=AliasChoices("smtp_username", "smtp_user"),
+    )
     smtp_password: str = ""
     smtp_from: str = ""
     smtp_use_tls: bool = True
+    smtp_use_ssl: bool = False
+    smtp_timeout_seconds: int = Field(default=20, ge=1, le=120)
     # OpenAI (server-side only — never expose to the browser).
     openai_api_key: str = ""
     openai_model: str = "gpt-4.1-mini"

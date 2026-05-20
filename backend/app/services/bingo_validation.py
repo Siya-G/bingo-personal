@@ -6,6 +6,10 @@ from sqlalchemy.orm import Session, selectinload
 from app.models import BingoCard, BingoCardCell, Game, Player, Winner
 from app.schemas.game import BingoClaimResponse, PlayerWinnerStatusResponse
 from app.services.prize_notification import create_prize_notification_for_new_winner
+from app.services.winning_pattern_rules import (
+    canonicalize_winning_pattern,
+    winning_pattern_display_name,
+)
 
 
 def _valid_mark(cell: BingoCardCell) -> bool:
@@ -41,8 +45,12 @@ def _has_full_house(valid: list[list[bool]]) -> bool:
     return all(valid[r][c] for r in range(5) for c in range(5))
 
 
-def _pattern_satisfied(pattern: str, valid: list[list[bool]]) -> bool:
-    key = pattern.strip().upper().replace(" ", "_")
+def _has_four_corners(valid: list[list[bool]]) -> bool:
+    return bool(valid[0][0] and valid[0][4] and valid[4][0] and valid[4][4])
+
+
+def _pattern_satisfied(canonical_pattern: str, valid: list[list[bool]]) -> bool:
+    key = canonical_pattern.strip().upper().replace(" ", "_")
 
     if key == "HORIZONTAL_ROW":
         return _has_full_row(valid)
@@ -50,10 +58,23 @@ def _pattern_satisfied(pattern: str, valid: list[list[bool]]) -> bool:
         return _has_full_column(valid)
     if key == "DIAGONAL":
         return _has_main_diagonal(valid) or _has_anti_diagonal(valid)
+    if key == "FOUR_CORNERS":
+        return _has_four_corners(valid)
     if key == "FULL_HOUSE":
         return _has_full_house(valid)
 
     return False
+
+
+def first_matching_winning_pattern(
+    patterns: list[str], valid: list[list[bool]]
+) -> str | None:
+    """Return the first configured pattern satisfied by ``valid`` (in list order)."""
+    for raw in patterns:
+        key = canonicalize_winning_pattern(raw)
+        if _pattern_satisfied(key, valid):
+            return key
+    return None
 
 
 def claim_bingo(game: Game, player: Player, db: Session) -> BingoClaimResponse:
@@ -71,12 +92,14 @@ def claim_bingo(game: Game, player: Player, db: Session) -> BingoClaimResponse:
             player_id=player.id,
             player_name=player.name,
             rank=existing.rank,
+            matched_pattern=None,
         )
 
     if game.status == "COMPLETED":
         return BingoClaimResponse(
             success=False,
             message="This game is completed. No new Bingo claims are accepted.",
+            matched_pattern=None,
         )
 
     card = db.scalar(
@@ -93,6 +116,7 @@ def claim_bingo(game: Game, player: Player, db: Session) -> BingoClaimResponse:
         return BingoClaimResponse(
             success=False,
             message="No Bingo card was found for this player.",
+            matched_pattern=None,
         )
 
     winner_count = int(
@@ -103,16 +127,20 @@ def claim_bingo(game: Game, player: Player, db: Session) -> BingoClaimResponse:
         return BingoClaimResponse(
             success=False,
             message="This game already has three winners.",
+            matched_pattern=None,
         )
 
     valid = _build_validity_grid(list(card.cells))
-    if not _pattern_satisfied(game.winning_pattern, valid):
+    configured = list(game.winning_patterns)
+    matched = first_matching_winning_pattern(configured, valid)
+    if matched is None:
         return BingoClaimResponse(
             success=False,
             message=(
-                "Your card does not complete the required winning pattern "
+                "Your card does not complete any of this game's winning patterns "
                 "with squares that are both marked and called."
             ),
+            matched_pattern=None,
         )
 
     new_rank = winner_count + 1
@@ -143,12 +171,14 @@ def claim_bingo(game: Game, player: Player, db: Session) -> BingoClaimResponse:
         db.commit()
         db.refresh(game)
 
+    label = winning_pattern_display_name(matched)
     return BingoClaimResponse(
         success=True,
-        message="Bingo! Your claim is valid.",
+        message=f"Bingo confirmed with {label}.",
         player_id=player.id,
         player_name=player.name,
         rank=new_rank,
+        matched_pattern=matched,
     )
 
 

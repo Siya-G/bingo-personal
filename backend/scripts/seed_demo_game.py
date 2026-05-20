@@ -24,6 +24,7 @@ It does **not** start the game or call items — that is for your live demo.
 
 from __future__ import annotations
 
+import json
 import os
 import secrets
 import string
@@ -75,6 +76,7 @@ def main() -> None:
             topic=DEMO_TOPIC,
             number_of_players=12,
             winning_pattern="HORIZONTAL_ROW",
+            winning_patterns_json=json.dumps(["HORIZONTAL_ROW"]),
             game_code=_generate_game_code(db),
             status="WAITING",
             host_pin_salt=pin_salt,

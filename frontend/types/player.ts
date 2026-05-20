@@ -11,7 +11,10 @@ export type JoinGameResponse = {
   player_name: string;
   game_title: string;
   game_status: string;
-  card_id: number;
+  /** ``WAITING_FOR_CARDS`` when items/cards do not exist yet. */
+  player_status: "READY" | "WAITING_FOR_CARDS";
+  /** ``null`` while waiting for the host to generate cards. */
+  card_id: number | null;
   grid: BingoCardCell[][];
   /** One-time secret for player-only API routes — store client-side for MVP only. */
   session_token: string;

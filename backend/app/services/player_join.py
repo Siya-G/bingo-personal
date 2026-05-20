@@ -50,6 +50,11 @@ def join_game(join_data: PlayerJoinRequest, db: Session) -> PlayerJoinResponse:
     player.session_token_hash = digest
     db.flush()
 
+    # Card assignment is best-effort here. When the host has not generated items
+    # yet the player still gets a record + session token and enters the waiting
+    # room; the next ``generate-cards`` call (or a same-room player joining
+    # after items exist) issues a real card for them. We only surface 500 for
+    # truly unexpected SQL/state errors — never for "items not ready".
     try:
         card = assign_card_to_player(game_id=game.id, player_id=player.id, db=db)
     except HTTPException:
@@ -60,10 +65,24 @@ def join_game(join_data: PlayerJoinRequest, db: Session) -> PlayerJoinResponse:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=(
-                "We could not finish creating your Bingo card. "
-                "Ask the host to generate items first, then try joining again."
+                "We could not finish creating your player session. "
+                "Try joining again in a moment."
             ),
         ) from exc
+
+    if card is None:
+        db.commit()
+        return PlayerJoinResponse(
+            game_id=game.id,
+            player_id=player.id,
+            player_name=player.name,
+            game_title=game.title,
+            game_status=game.status,
+            player_status="WAITING_FOR_CARDS",
+            card_id=None,
+            grid=[],
+            session_token=session_plain,
+        )
 
     return PlayerJoinResponse(
         game_id=game.id,
@@ -71,6 +90,7 @@ def join_game(join_data: PlayerJoinRequest, db: Session) -> PlayerJoinResponse:
         player_name=player.name,
         game_title=game.title,
         game_status=game.status,
+        player_status="READY",
         card_id=card.card_id,
         grid=card.grid,
         session_token=session_plain,

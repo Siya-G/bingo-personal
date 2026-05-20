@@ -1,21 +1,28 @@
 from datetime import datetime
 import re
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
+
+from app.services.winning_pattern_rules import normalize_winning_pattern_list
 
 
 class GameCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=120)
     topic: str = Field(..., min_length=1, max_length=160)
     number_of_players: int = Field(..., ge=1, le=500)
-    winning_pattern: Literal[
-        "HORIZONTAL_ROW",
-        "VERTICAL_COLUMN",
-        "DIAGONAL",
-        "FULL_HOUSE",
-    ]
+    winning_patterns: list[str] | None = Field(
+        default=None,
+        max_length=8,
+        description="One or more patterns; a player wins if any pattern matches.",
+    )
+    winning_pattern: str | None = Field(
+        default=None,
+        description="Legacy single pattern when winning_patterns is omitted.",
+    )
     host_pin: str = Field(..., min_length=4, max_length=128)
+
+    _resolved_winning_patterns: list[str] = PrivateAttr(default_factory=list)
 
     @field_validator("title", "topic", "host_pin")
     @classmethod
@@ -24,6 +31,30 @@ class GameCreate(BaseModel):
         if not stripped:
             raise ValueError("This field cannot be empty or whitespace only.")
         return stripped
+
+    @model_validator(mode="after")
+    def resolve_winning_patterns(self) -> Self:
+        raw: list[str] = []
+        if self.winning_patterns and len(self.winning_patterns) > 0:
+            raw = [str(p) for p in self.winning_patterns]
+        elif self.winning_pattern is not None and str(self.winning_pattern).strip():
+            raw = [str(self.winning_pattern)]
+        else:
+            raise ValueError(
+                "Select at least one winning pattern (send winning_patterns "
+                "or legacy winning_pattern)."
+            )
+        try:
+            normalized = normalize_winning_pattern_list(raw)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+        if not normalized:
+            raise ValueError("Select at least one winning pattern.")
+        self._resolved_winning_patterns = normalized
+        return self
+
+    def resolved_winning_patterns(self) -> list[str]:
+        return list(self._resolved_winning_patterns)
 
 
 class GameResponse(BaseModel):
@@ -35,6 +66,7 @@ class GameResponse(BaseModel):
     game_code: str
     status: str
     winning_pattern: str
+    winning_patterns: list[str]
     number_of_players: int
     created_at: datetime
 
@@ -81,9 +113,17 @@ class BingoCardCellResponse(BaseModel):
 
 
 class BingoCardResponse(BaseModel):
-    card_id: int
+    """One player's Bingo card.
+
+    ``card_id`` is ``None`` and ``grid`` is empty while a player has joined the
+    room but the host has not yet generated cards. The frontend uses this as the
+    waiting-room signal so a fresh join does not flash a "Could not load card"
+    error before items exist.
+    """
+
+    card_id: int | None = None
     player_id: int
-    grid: list[list[BingoCardCellResponse]]
+    grid: list[list[BingoCardCellResponse]] = Field(default_factory=list)
 
 
 class PlayerJoinRequest(BaseModel):
@@ -110,13 +150,21 @@ class PlayerJoinRequest(BaseModel):
 
 
 class PlayerJoinResponse(BaseModel):
+    """Result of POST /games/join.
+
+    ``player_status`` is ``WAITING_FOR_CARDS`` when items/cards do not exist yet
+    (the host can still be setting up). In that case ``card_id`` is ``None`` and
+    ``grid`` is empty — the player UI shows a waiting room instead of an error.
+    """
+
     game_id: int
     player_id: int
     player_name: str
     game_title: str
     game_status: str
-    card_id: int
-    grid: list[list[BingoCardCellResponse]]
+    player_status: Literal["READY", "WAITING_FOR_CARDS"] = "READY"
+    card_id: int | None = None
+    grid: list[list[BingoCardCellResponse]] = Field(default_factory=list)
     session_token: str
 
 
@@ -153,6 +201,7 @@ class BingoClaimResponse(BaseModel):
     player_id: int | None = None
     player_name: str | None = None
     rank: int | None = None
+    matched_pattern: str | None = None
 
 
 class PlayerWinnerStatusResponse(BaseModel):
@@ -205,6 +254,8 @@ class PrizeNotificationResponse(BaseModel):
 class GameInviteRecipientResponse(BaseModel):
     email: str
     invite_status: Literal["PREVIEW", "SENT", "FAILED"]
+    error_message: str | None = None
+    sent_at: datetime | None = None
 
 
 class GameInvitesRequest(BaseModel):
@@ -231,6 +282,10 @@ class GameInvitesRequest(BaseModel):
 
 class GameInvitesResponse(BaseModel):
     mode: Literal["preview", "sent"]
+    smtp_configured: bool = False
+    smtp_host: str | None = None
+    sent_count: int = 0
+    failed_count: int = 0
     game_id: str
     room_code: str
     bingo_join_url: str

@@ -1,5 +1,6 @@
 """Pydantic request and response schemas."""
 
+from app.schemas.chat import ChatMessageCreate, ChatMessageResponse
 from app.schemas.game import (
     AuditEventResponse,
     BingoCardCellResponse,
@@ -31,6 +32,8 @@ __all__ = [
     "BingoClaimResponse",
     "BingoItemResponse",
     "CalledItemResponse",
+    "ChatMessageCreate",
+    "ChatMessageResponse",
     "GameCreate",
     "GenerateItemsResponse",
     "GameInviteRecipientResponse",

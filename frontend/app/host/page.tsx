@@ -1,3 +1,4 @@
+import { HostChatCard } from "@/components/chat/host-chat-card";
 import { CreateGameForm } from "@/components/host/create-game-form";
 import { GameplayControls } from "@/components/host/gameplay-controls";
 import { HostVoiceSettings } from "@/components/host/host-voice-settings";
@@ -10,7 +11,7 @@ import { StatCard } from "@/components/ui/stat-card";
 const setupSteps = [
   {
     title: "Create the lobby",
-    detail: "Title, topic, pattern, and host PIN (PIN unlocks generate/start/call/audit).",
+    detail: "Title, topic, winning patterns (pick one or more), and host PIN (PIN unlocks generate/start/call/audit).",
   },
   {
     title: "Generate content",
@@ -123,6 +124,17 @@ export default function HostDashboardPage() {
         </p>
         <div className="mt-6">
           <GameplayControls />
+        </div>
+      </Panel>
+
+      <Panel>
+        <h2 className="text-2xl font-black text-white">Room chat</h2>
+        <p className="mt-2 text-sm text-slate-400">
+          Talk to everyone in this game room. System lines (player joined, item
+          called, Bingo claimed) appear automatically.
+        </p>
+        <div className="mt-6">
+          <HostChatCard />
         </div>
       </Panel>
     </div>

@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+import json
 from datetime import datetime
 
 from sqlalchemy import (
@@ -31,6 +34,7 @@ class Game(Base):
     )
     status: Mapped[str] = mapped_column(String(32), default="WAITING", nullable=False)
     winning_pattern: Mapped[str] = mapped_column(String(64), nullable=False)
+    winning_patterns_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     number_of_players: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -84,6 +88,24 @@ class Game(Base):
         back_populates="game",
         cascade="all, delete-orphan",
     )
+    chat_messages: Mapped[list["ChatMessage"]] = relationship(
+        "ChatMessage",
+        back_populates="game",
+        cascade="all, delete-orphan",
+    )
+
+    @property
+    def winning_patterns(self) -> list[str]:
+        """All active winning patterns (JSON column); falls back to legacy single column."""
+        raw = self.winning_patterns_json
+        if raw and str(raw).strip():
+            try:
+                data = json.loads(str(raw))
+                if isinstance(data, list) and len(data) > 0:
+                    return [str(x) for x in data]
+            except (json.JSONDecodeError, TypeError):
+                pass
+        return [self.winning_pattern]
 
 
 class GameInvite(Base):
@@ -100,6 +122,11 @@ class GameInvite(Base):
     email: Mapped[str] = mapped_column(String(254), nullable=False)
     name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     invite_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

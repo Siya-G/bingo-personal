@@ -11,7 +11,11 @@ import type { PrizeNotification } from "@/types/prize";
 import type { CalledItem } from "@/types/gameplay";
 import type { BingoCard } from "@/types/card";
 import type { JoinGamePayload, JoinGameResponse } from "@/types/player";
-import type { GameInvitesResult, SendGameInvitesPayload } from "@/types/invite";
+import type {
+  GameInvitesResult,
+  SendGameInvitesPayload,
+  SmtpHealth,
+} from "@/types/invite";
 
 const API_BASE_URL = getPublicApiBaseUrl();
 
@@ -34,6 +38,18 @@ function headersWithPlayerSession(
     return {};
   }
   return { [HEADER_PLAYER_SESSION]: trimmed };
+}
+
+export async function getSmtpHealth(): Promise<SmtpHealth> {
+  const response = await fetch(`${API_BASE_URL}/health/smtp`);
+  if (!response.ok) {
+    const message = await readApiErrorDetail(
+      response,
+      "Unable to read SMTP status.",
+    );
+    throw new Error(message);
+  }
+  return response.json() as Promise<SmtpHealth>;
 }
 
 export async function createGame(payload: CreateGamePayload): Promise<Game> {

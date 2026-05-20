@@ -1,4 +1,5 @@
 import type { BingoClaimResponse } from "@/types/bingo";
+import type { ChatMessage } from "@/types/chat";
 import type { LeaderboardWinner } from "@/types/leaderboard";
 
 /** Payload for NEW_CALLED_ITEM — matches CalledItem from REST. */
@@ -50,6 +51,14 @@ export type WsPrizeNotificationCreatedPayload = {
   created_at: string;
 };
 
+export type WsCardsGeneratedPayload = {
+  game_id: number;
+  item_count: number;
+  card_count: number;
+};
+
+export type WsChatMessagePayload = ChatMessage;
+
 export type GameSocketEvent =
   | { type: "NEW_CALLED_ITEM"; payload: WsNewCalledItemPayload }
   | { type: "CARD_CELL_UPDATED"; payload: WsCardCellUpdatedPayload }
@@ -57,7 +66,9 @@ export type GameSocketEvent =
   | { type: "LEADERBOARD_UPDATED"; payload: WsLeaderboardUpdatedPayload }
   | { type: "GAME_COMPLETED"; payload: WsGameCompletedPayload }
   | { type: "AUDIT_EVENT_CREATED"; payload: WsAuditEventCreatedPayload }
-  | { type: "PRIZE_NOTIFICATION_CREATED"; payload: WsPrizeNotificationCreatedPayload };
+  | { type: "PRIZE_NOTIFICATION_CREATED"; payload: WsPrizeNotificationCreatedPayload }
+  | { type: "CARDS_GENERATED"; payload: WsCardsGeneratedPayload }
+  | { type: "CHAT_MESSAGE"; payload: WsChatMessagePayload };
 
 export function parseGameSocketEvent(raw: unknown): GameSocketEvent | null {
   if (!raw || typeof raw !== "object") {
@@ -75,6 +86,8 @@ export function parseGameSocketEvent(raw: unknown): GameSocketEvent | null {
     case "GAME_COMPLETED":
     case "AUDIT_EVENT_CREATED":
     case "PRIZE_NOTIFICATION_CREATED":
+    case "CARDS_GENERATED":
+    case "CHAT_MESSAGE":
       return obj as GameSocketEvent;
     default:
       return null;

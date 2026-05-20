@@ -1,6 +1,8 @@
 import secrets
 import string
 
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -30,21 +32,17 @@ from app.schemas import (
     PlayerWinnerStatusResponse,
     PrizeNotificationResponse,
 )
+from app.services.card_generator import generate_cards_for_game, get_player_card
 from app.services.game_invites import process_game_invites
+from app.services.gameplay import call_next_item, get_called_items, start_game
 from app.services.llm_items import resolve_generated_items_for_game
-from app.services import (
-    call_next_item,
-    generate_cards_for_game,
-    get_called_items,
-    get_player_card,
-    join_game,
-    start_game,
-)
+from app.services.player_join import join_game
 from app.services.audit_log import (
     audit_event_to_response,
     create_audit_event,
     list_audit_events_for_game,
 )
+from app.services.chat import create_system_chat_message
 from app.services.bingo_validation import claim_bingo, get_player_winner_status
 from app.services.card_marking import toggle_card_cell_mark
 from app.services.game_lookup import get_game_or_404
@@ -59,6 +57,7 @@ from app.services.secret_hashes import hash_secret
 from app.services.websocket_manager import (
     notify_bingo_claimed,
     notify_card_cell_updated,
+    notify_cards_generated,
     notify_game_completed,
     notify_leaderboard_updated,
     notify_new_called_item,
@@ -108,11 +107,13 @@ def generate_game_code(db: Session) -> str:
 @router.post("", response_model=GameResponse, status_code=status.HTTP_201_CREATED)
 def create_game(game_data: GameCreate, db: Session = Depends(get_db)) -> Game:
     pin_salt, pin_hash = hash_secret(game_data.host_pin)
+    patterns = game_data.resolved_winning_patterns()
     game = Game(
         title=game_data.title,
         topic=game_data.topic,
         number_of_players=game_data.number_of_players,
-        winning_pattern=game_data.winning_pattern,
+        winning_pattern=patterns[0],
+        winning_patterns_json=json.dumps(patterns),
         game_code=generate_game_code(db),
         status="WAITING",
         host_pin_salt=pin_salt,
@@ -134,6 +135,7 @@ def create_game(game_data: GameCreate, db: Session = Depends(get_db)) -> Game:
             "topic": game.topic,
             "game_code": game.game_code,
             "winning_pattern": game.winning_pattern,
+            "winning_patterns": patterns,
             "number_of_players": game.number_of_players,
         },
     )
@@ -160,6 +162,11 @@ def join_game_by_code(
             "player_id": response.player_id,
             "player_name": response.player_name,
         },
+    )
+    create_system_chat_message(
+        db=db,
+        game_id=response.game_id,
+        message=f"{response.player_name} joined the room.",
     )
     return response
 
@@ -234,7 +241,13 @@ def start_game_by_id(
     game: Game = Depends(host_pin_protected_game),
     db: Session = Depends(get_db),
 ) -> Game:
-    return start_game(game=game, db=db)
+    started = start_game(game=game, db=db)
+    create_system_chat_message(
+        db=db,
+        game_id=started.id,
+        message="The host started the game. Good luck!",
+    )
+    return started
 
 
 @router.post("/{game_id}/call-next", response_model=CalledItemResponse)
@@ -253,6 +266,11 @@ def call_next_game_item(
             "word": result.word,
             "called_order": result.called_order,
         },
+    )
+    create_system_chat_message(
+        db=db,
+        game_id=game.id,
+        message=f"{result.word} was called.",
     )
     notify_new_called_item(game.id, result)
     return result
@@ -379,7 +397,19 @@ def generate_cards(
     game: Game = Depends(host_pin_protected_game),
     db: Session = Depends(get_db),
 ) -> list[BingoCardResponse]:
-    return generate_cards_for_game(game=game, db=db)
+    cards = generate_cards_for_game(game=game, db=db)
+    item_count = (
+        db.scalar(
+            select(func.count(BingoItem.id)).where(BingoItem.game_id == game.id)
+        )
+        or 0
+    )
+    notify_cards_generated(
+        game_id=game.id,
+        item_count=int(item_count),
+        card_count=len(cards),
+    )
+    return cards
 
 
 @router.post(
@@ -453,15 +483,16 @@ def get_card_for_player(
     player: Player = Depends(player_session_protected),
     db: Session = Depends(get_db),
 ) -> BingoCardResponse:
+    """Return the player's card, or a waiting-room envelope when the host has
+    not generated cards yet.
+
+    Returning 200 with ``card_id=null`` (rather than 404) lets the player UI
+    distinguish "joined but waiting" from real errors (wrong session token,
+    deleted game) without parsing error strings.
+    """
     card = get_player_card(game_id=game_id, player_id=player.id, db=db)
     if card is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=(
-                "No Bingo card is available for this player yet. "
-                "Ask the host to generate cards after items are ready."
-            ),
-        )
+        return BingoCardResponse(card_id=None, player_id=player.id, grid=[])
 
     return card
 
@@ -538,6 +569,12 @@ def claim_bingo_for_player(
     notify_bingo_claimed(game_id, result)
     if result.success:
         notify_leaderboard_updated(game_id, game, db)
+        if result.rank is not None and "already" not in result.message.lower():
+            create_system_chat_message(
+                db=db,
+                game_id=game_id,
+                message=f"{player_label} claimed Bingo! (Rank #{result.rank})",
+            )
     if game.status == "COMPLETED":
         notify_game_completed(game_id)
 
@@ -573,7 +610,7 @@ def send_game_invites(
         )
     except ValueError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
         ) from exc
 

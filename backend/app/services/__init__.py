@@ -1,17 +1,20 @@
-"""Application service layer."""
+"""Application service layer.
 
-from app.services.card_generator import generate_cards_for_game, get_player_card
-from app.services.gameplay import call_next_item, get_called_items, start_game
-from app.services.item_generator import GeneratedItem, generate_mock_items
-from app.services.player_join import join_game
+This package intentionally does NOT eagerly re-export names from concrete
+service modules. Doing so created a startup-time circular import:
 
-__all__ = [
-    "GeneratedItem",
-    "call_next_item",
-    "generate_cards_for_game",
-    "generate_mock_items",
-    "get_called_items",
-    "get_player_card",
-    "join_game",
-    "start_game",
-]
+    app.schemas.game
+        → from app.services.winning_pattern_rules import normalize_winning_pattern_list
+        → (loads app.services package init)
+        → from app.services.card_generator import ...
+        → from app.schemas import BingoCardResponse   ← app.schemas is mid-init
+        → ImportError
+
+Callers should import directly from the concrete submodule they need, e.g.
+``from app.services.gameplay import call_next_item`` or
+``from app.services.card_generator import generate_cards_for_game``. That way
+``app.schemas.game`` can pull a single pure-Python helper from
+``app.services.winning_pattern_rules`` without dragging the whole service
+graph (which depends back on ``app.schemas``) into the partially-initialized
+schemas package.
+"""

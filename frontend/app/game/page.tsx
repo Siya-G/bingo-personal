@@ -1,3 +1,4 @@
+import { PlayerChatCard } from "@/components/chat/player-chat-card";
 import { PlayerCalledItemsPanel } from "@/components/game/player-called-items-panel";
 import { PlayerCardPanel } from "@/components/game/player-card-panel";
 import { DemoCallout } from "@/components/demo/demo-callout";
@@ -11,7 +12,7 @@ export default function PlayerGamePage() {
       <PageHeader
         eyebrow="Player game"
         title="Your card and the live call feed."
-        description="After joining, your session loads automatically. Mark squares only after the host calls them, then press Bingo when your pattern is complete. When the room finishes with three winners, new claims close — the UI shows a completed-game banner."
+        description="After joining, your session loads automatically. Mark squares only after the host calls them, then press Bingo when your card completes any of this room’s winning patterns. When the room finishes with three winners, new claims close — the UI shows a completed-game banner."
         actions={
           <>
             <ButtonLink href="/join">Join another room</ButtonLink>
@@ -45,6 +46,17 @@ export default function PlayerGamePage() {
           <PlayerCardPanel />
         </Panel>
       </div>
+
+      <Panel>
+        <h2 className="text-2xl font-black text-white">Room chat</h2>
+        <p className="mt-2 text-sm text-slate-400">
+          Talk to the host and other players in real time. Messages persist —
+          refresh the page and recent chat will still be here.
+        </p>
+        <div className="mt-6">
+          <PlayerChatCard />
+        </div>
+      </Panel>
     </div>
   );
 }

@@ -4,6 +4,8 @@ export type BingoClaimResponse = {
   player_id: number | null;
   player_name: string | null;
   rank: number | null;
+  /** Present when ``success`` is true (canonical key, e.g. ``HORIZONTAL_ROW``). */
+  matched_pattern?: string | null;
 };
 
 export type PlayerBingoWinStatus = {

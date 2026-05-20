@@ -420,6 +420,12 @@ export function GameplayControls() {
   const isActive = liveStatus === "ACTIVE";
   const isCompleted = liveStatus === "COMPLETED";
   const socketLine = gameId.trim() ? formatSocketStatus(wsStatus) : null;
+  const totalItemCount =
+    visibleGeneratedRows.length > 0
+      ? visibleGeneratedRows.length
+      : itemPoolMeta?.actual_count;
+  const callNextDisabled = !isActive || !gameId.trim() || isCompleted;
+  const callNextLabel = isCompleted ? "Game completed" : "Call Next Item";
 
   return (
     <div className="rounded-3xl bg-slate-950/50 p-5 sm:p-6">
@@ -446,189 +452,205 @@ export function GameplayControls() {
         <p className="mt-3 text-xs font-semibold text-cyan-200/90">{socketLine}</p>
       ) : null}
 
-      <form className="mt-6 grid gap-3 sm:grid-cols-[1fr_auto]" onSubmit={handleRefresh}>
-        <input
-          className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-white outline-none placeholder:text-slate-500 focus:border-yellow-300/70"
-          inputMode="numeric"
-          onChange={(event) => setGameId(event.target.value)}
-          placeholder="Game ID"
-          type="text"
-          value={gameId}
-        />
-        <button
-          className="rounded-full border border-white/15 bg-white/10 px-5 py-3 text-sm font-black uppercase tracking-[0.18em] text-white transition hover:border-white/30 hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-60"
-          disabled={isRefreshing}
-          type="submit"
-        >
-          {isRefreshing ? "Refreshing..." : "Refresh Calls"}
-        </button>
-      </form>
-
-      <label className="mt-4 block">
-        <span className="text-xs font-black uppercase tracking-[0.18em] text-yellow-200">
-          Host PIN
-        </span>
-        <input
-          autoComplete="off"
-          className="mt-2 w-full rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-white outline-none placeholder:text-slate-500 focus:border-yellow-300/70"
-          onBlur={persistHostPin}
-          onChange={(event) => setHostPin(event.target.value)}
-          placeholder="PIN from create-game step"
-          type="password"
-          value={hostPin}
-        />
-      </label>
-
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <button
-          className="rounded-full border border-white/15 bg-white/10 px-5 py-3 text-sm font-black uppercase tracking-[0.16em] text-white transition hover:border-white/30 hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-60"
-          disabled={isGeneratingItems || !gameId.trim()}
-          onClick={() => void handleGenerateItems()}
-          type="button"
-        >
-          {isGeneratingItems ? "Generating items with AI..." : "Generate items"}
-        </button>
-        <button
-          className="rounded-full border border-white/15 bg-white/10 px-5 py-3 text-sm font-black uppercase tracking-[0.16em] text-white transition hover:border-white/30 hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-60"
-          disabled={isGeneratingCards || !gameId.trim()}
-          onClick={() => void handleGenerateCards()}
-          type="button"
-        >
-          {isGeneratingCards ? "Creating cards..." : "Generate cards"}
-        </button>
-      </div>
-
-      <LoadingState
-        active={isGeneratingItems}
-        label="Generating items with AI..."
-      />
-      <LoadingState
-        active={isGeneratingCards}
-        label="Creating cards…"
-      />
-
-      {itemPoolMeta ? (
-        <div className="mt-4 rounded-2xl border border-slate-600/35 bg-slate-900/45 p-4 text-sm text-slate-300">
-          <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">
-            Item pool
-          </p>
-          <p className="mt-2 text-slate-200">
-            Target:{" "}
-            <strong className="text-white">{itemPoolMeta.target_count}</strong>
-            <span className="text-slate-500"> · </span>
-            Generated:{" "}
-            <strong className="text-emerald-200">{itemPoolMeta.actual_count}</strong>
-            <span className="text-slate-500"> · </span>
-            Minimum:{" "}
-            <strong className="text-slate-100">{itemPoolMeta.minimum_count}</strong>
-          </p>
-          {itemPoolMeta.warning ? (
-            <p
-              className="mt-3 rounded-xl border border-amber-400/40 bg-amber-500/10 px-3 py-2.5 text-amber-50"
-              role="status"
+      {/* Two-column gameplay layout: setup/leaderboard on the left, sticky agent on the right. */}
+      <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] lg:items-start">
+        <div className="min-w-0 space-y-6">
+          <form className="grid gap-3 sm:grid-cols-[1fr_auto]" onSubmit={handleRefresh}>
+            <input
+              className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-white outline-none placeholder:text-slate-500 focus:border-yellow-300/70"
+              inputMode="numeric"
+              onChange={(event) => setGameId(event.target.value)}
+              placeholder="Game ID"
+              type="text"
+              value={gameId}
+            />
+            <button
+              className="rounded-full border border-white/15 bg-white/10 px-5 py-3 text-sm font-black uppercase tracking-[0.18em] text-white transition hover:border-white/30 hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={isRefreshing}
+              type="submit"
             >
-              {itemPoolMeta.warning}
-            </p>
+              {isRefreshing ? "Refreshing..." : "Refresh Calls"}
+            </button>
+          </form>
+
+          <label className="block">
+            <span className="text-xs font-black uppercase tracking-[0.18em] text-yellow-200">
+              Host PIN
+            </span>
+            <input
+              autoComplete="off"
+              className="mt-2 w-full rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-white outline-none placeholder:text-slate-500 focus:border-yellow-300/70"
+              onBlur={persistHostPin}
+              onChange={(event) => setHostPin(event.target.value)}
+              placeholder="PIN from create-game step"
+              type="password"
+              value={hostPin}
+            />
+          </label>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <button
+              className="rounded-full border border-white/15 bg-white/10 px-5 py-3 text-sm font-black uppercase tracking-[0.16em] text-white transition hover:border-white/30 hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={isGeneratingItems || !gameId.trim()}
+              onClick={() => void handleGenerateItems()}
+              type="button"
+            >
+              {isGeneratingItems ? "Generating items with AI..." : "Generate items"}
+            </button>
+            <button
+              className="rounded-full border border-white/15 bg-white/10 px-5 py-3 text-sm font-black uppercase tracking-[0.16em] text-white transition hover:border-white/30 hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={isGeneratingCards || !gameId.trim()}
+              onClick={() => void handleGenerateCards()}
+              type="button"
+            >
+              {isGeneratingCards ? "Creating cards..." : "Generate cards"}
+            </button>
+          </div>
+
+          <LoadingState
+            active={isGeneratingItems}
+            label="Generating items with AI..."
+          />
+          <LoadingState
+            active={isGeneratingCards}
+            label="Creating cards…"
+          />
+
+          {itemPoolMeta ? (
+            <div className="rounded-2xl border border-slate-600/35 bg-slate-900/45 p-4 text-sm text-slate-300">
+              <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">
+                Item pool
+              </p>
+              <p className="mt-2 text-slate-200">
+                Target:{" "}
+                <strong className="text-white">{itemPoolMeta.target_count}</strong>
+                <span className="text-slate-500"> · </span>
+                Generated:{" "}
+                <strong className="text-emerald-200">{itemPoolMeta.actual_count}</strong>
+                <span className="text-slate-500"> · </span>
+                Minimum:{" "}
+                <strong className="text-slate-100">{itemPoolMeta.minimum_count}</strong>
+              </p>
+              {itemPoolMeta.warning ? (
+                <p
+                  className="mt-3 rounded-xl border border-amber-400/40 bg-amber-500/10 px-3 py-2.5 text-amber-50"
+                  role="status"
+                >
+                  {itemPoolMeta.warning}
+                </p>
+              ) : null}
+            </div>
           ) : null}
+
+          {visibleGeneratedRows.length > 0 ? (
+            <details className="rounded-2xl border border-emerald-400/25 bg-slate-900/55">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-xs font-black uppercase tracking-[0.2em] text-emerald-200">
+                <span>Generated word pool ({visibleGeneratedRows.length})</span>
+                <span className="text-emerald-200/60">›</span>
+              </summary>
+              <div className="border-t border-emerald-400/15 px-4 py-3">
+                <p className="text-xs text-slate-400">
+                  Shared pool for this game. Each player&apos;s 5×5 card uses{" "}
+                  <strong className="text-slate-200">25</strong> random picks from this
+                  list (calls still draw from the full pool).
+                </p>
+                <ul className="mt-3 max-h-72 space-y-2.5 overflow-auto pr-1 text-sm text-slate-200">
+                  {visibleGeneratedRows.map((row) => (
+                    <li
+                      key={row.id}
+                      className="border-b border-white/5 pb-2.5 last:border-0 last:pb-0"
+                    >
+                      <span className="font-bold text-white">{row.word}</span>
+                      <span className="text-slate-500"> — </span>
+                      <span className="text-slate-300">{row.description}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </details>
+          ) : null}
+
+          <div>
+            <button
+              className="w-full rounded-full bg-yellow-300 px-5 py-4 text-sm font-black uppercase tracking-[0.18em] text-slate-950 shadow-lg shadow-yellow-500/30 transition hover:bg-yellow-200 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={isStarting || isCompleted}
+              onClick={() => void handleStartGame()}
+              type="button"
+            >
+              {isStarting ? "Starting game…" : "Start Game"}
+            </button>
+            <p className="mt-2 text-xs text-slate-500">
+              Use <strong className="text-slate-300">Call Next Item</strong> in the
+              Bingo Agent panel to draw words while the round is active.
+            </p>
+          </div>
+
+          {isCompleted ? (
+            <div className="rounded-2xl border border-fuchsia-400/35 bg-fuchsia-500/10 p-4 text-center text-sm font-bold text-fuchsia-100">
+              This game is completed — calling more items is disabled.
+            </div>
+          ) : null}
+
+          <ErrorMessage message={error} title="Something went wrong" />
+
+          <div className="border-t border-white/10 pt-6">
+            <HostLeaderboardPreview
+              error={leaderboardError}
+              gameId={gameId.trim()}
+              leaderboard={leaderboard}
+              loading={leaderboardLoading}
+              liveHint="Standings update live over the WebSocket when players claim Bingo."
+            />
+          </div>
+
+          <div className="border-t border-white/10 pt-6">
+            <HostAuditTrail
+              error={auditError}
+              events={auditEvents}
+              loading={auditLoading}
+            />
+          </div>
+
+          <div className="border-t border-white/10 pt-6">
+            <HostPrizeNotifications
+              error={prizeError}
+              gameId={gameId.trim()}
+              loading={prizeLoading}
+              notifications={prizeNotifications}
+              onMarkDisplayed={handleMarkPrizeDisplayed}
+            />
+          </div>
         </div>
-      ) : null}
 
-      {visibleGeneratedRows.length > 0 ? (
-        <div className="mt-4 max-h-72 overflow-auto rounded-2xl border border-emerald-400/25 bg-slate-900/55 p-4">
-          <p className="text-xs font-black uppercase tracking-[0.2em] text-emerald-200">
-            Generated word pool ({visibleGeneratedRows.length})
-          </p>
-          <p className="mt-1 text-xs text-slate-400">
-            Shared pool for this game. Each player&apos;s 5×5 card uses{" "}
-            <strong className="text-slate-200">25</strong> random picks from this list
-            (calls still draw from the full pool).
-          </p>
-          <ul className="mt-3 space-y-2.5 text-sm text-slate-200">
-            {visibleGeneratedRows.map((row) => (
-              <li
-                key={row.id}
-                className="border-b border-white/5 pb-2.5 last:border-0 last:pb-0"
-              >
-                <span className="font-bold text-white">{row.word}</span>
-                <span className="text-slate-500"> — </span>
-                <span className="text-slate-300">{row.description}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <button
-          className="rounded-full bg-yellow-300 px-5 py-4 text-sm font-black uppercase tracking-[0.18em] text-slate-950 shadow-lg shadow-yellow-500/30 transition hover:bg-yellow-200 disabled:cursor-not-allowed disabled:opacity-60"
-          disabled={isStarting || isCompleted}
-          onClick={() => void handleStartGame()}
-          type="button"
-        >
-          {isStarting ? "Starting game…" : "Start Game"}
-        </button>
-        <button
-          className="rounded-full bg-fuchsia-400 px-5 py-4 text-sm font-black uppercase tracking-[0.18em] text-slate-950 shadow-lg shadow-fuchsia-500/30 transition hover:bg-fuchsia-300 disabled:cursor-not-allowed disabled:opacity-60"
-          disabled={!isActive || isCalling || isCompleted}
-          onClick={() => void handleCallNext()}
-          type="button"
-        >
-          {isCalling
-            ? "Calling next item…"
-            : isCompleted
-              ? "Game completed"
-              : "Call Next Item"}
-        </button>
+        <aside className="min-w-0 lg:sticky lg:top-4 lg:self-start">
+          {isActive || calledItems.length > 0 ? (
+            <BingoAgentPanel
+              items={calledItems}
+              compact
+              totalItemCount={totalItemCount}
+              onCallNext={() => void handleCallNext()}
+              isCallingNext={isCalling}
+              callNextDisabled={callNextDisabled}
+              callNextLabel={callNextLabel}
+              bottomNote={
+                !gameId.trim()
+                  ? "Enter a game ID to enable Call Next."
+                  : !isActive && !isCompleted
+                    ? "Press Start Game to begin calling items."
+                    : null
+              }
+            />
+          ) : (
+            <div className="rounded-3xl border border-white/10 bg-slate-950/45 p-5 text-sm text-slate-300">
+              <h2 className="text-xl font-black text-white">Bingo Agent</h2>
+              <p className="mt-2">
+                Start the game to open the Bingo Agent panel with narration and the
+                Call Next button.
+              </p>
+            </div>
+          )}
+        </aside>
       </div>
-
-      {isCompleted ? (
-        <div className="mt-5 rounded-2xl border border-fuchsia-400/35 bg-fuchsia-500/10 p-4 text-center text-sm font-bold text-fuchsia-100">
-          This game is completed — calling more items is disabled.
-        </div>
-      ) : null}
-
-      <div className="mt-5">
-        <ErrorMessage message={error} title="Something went wrong" />
-      </div>
-
-      <div className="mt-8 border-t border-white/10 pt-8">
-        <HostLeaderboardPreview
-          error={leaderboardError}
-          gameId={gameId.trim()}
-          leaderboard={leaderboard}
-          loading={leaderboardLoading}
-          liveHint="Standings update live over the WebSocket when players claim Bingo."
-        />
-      </div>
-
-      <div className="mt-8 border-t border-white/10 pt-8">
-        <HostAuditTrail
-          error={auditError}
-          events={auditEvents}
-          loading={auditLoading}
-        />
-      </div>
-
-      <div className="mt-8 border-t border-white/10 pt-8">
-        <HostPrizeNotifications
-          error={prizeError}
-          gameId={gameId.trim()}
-          loading={prizeLoading}
-          notifications={prizeNotifications}
-          onMarkDisplayed={handleMarkPrizeDisplayed}
-        />
-      </div>
-
-      {isActive || calledItems.length > 0 ? (
-        <div className="mt-8">
-          <BingoAgentPanel items={calledItems} />
-        </div>
-      ) : (
-        <p className="mt-8 rounded-2xl border border-white/10 bg-slate-950/45 p-4 text-sm text-slate-300">
-          Start the game to open the Bingo Agent panel with narration and call
-          history.
-        </p>
-      )}
     </div>
   );
 }

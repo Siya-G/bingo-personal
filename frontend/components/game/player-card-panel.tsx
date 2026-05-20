@@ -9,6 +9,7 @@ import {
   getPrizeNotifications,
 } from "@/lib/api/games";
 import { readPlayerGameSession } from "@/lib/player-session";
+import { formatWinningPatternsList } from "@/lib/winning-patterns";
 import { ButtonLink } from "@/components/ui/button-link";
 import { ErrorMessage } from "@/components/ui/error-message";
 import { LoadingState } from "@/components/ui/loading-state";
@@ -62,6 +63,9 @@ export function PlayerCardPanel() {
     text: string;
   } | null>(null);
   const [gameStatus, setGameStatus] = useState<string | null>(null);
+  const [winningPatternsSummary, setWinningPatternsSummary] = useState<
+    string | null
+  >(null);
   const [roomMessage, setRoomMessage] = useState<string | null>(null);
   const [playerPrizeNotice, setPlayerPrizeNotice] =
     useState<PrizeNotification | null>(null);
@@ -101,6 +105,7 @@ export function PlayerCardPanel() {
     if (!gameId.trim()) {
       startTransition(() => {
         setGameStatus(null);
+        setWinningPatternsSummary(null);
       });
       return;
     }
@@ -110,11 +115,17 @@ export function PlayerCardPanel() {
       .then((game) => {
         if (!cancelled) {
           setGameStatus(game.status);
+          const list =
+            Array.isArray(game.winning_patterns) && game.winning_patterns.length > 0
+              ? game.winning_patterns
+              : [String(game.winning_pattern)];
+          setWinningPatternsSummary(formatWinningPatternsList(list));
         }
       })
       .catch(() => {
         if (!cancelled) {
           setGameStatus(null);
+          setWinningPatternsSummary(null);
         }
       });
 
@@ -135,6 +146,23 @@ export function PlayerCardPanel() {
 
     queueMicrotask(() => {
       switch (lastEvent.type) {
+        case "CARDS_GENERATED": {
+          // Host just generated the item pool + cards. Waiting players refetch
+          // so the waiting-room UI swaps out for their real card.
+          const gid = gameId.trim();
+          if (!gid) {
+            break;
+          }
+          void getPlayerCard(gid, playerId.trim(), readSessionTokenForPlayer(gid, playerId))
+            .then((next) => {
+              setCard(next);
+              setError(null);
+            })
+            .catch(() => {
+              // Stay in waiting room if the refetch fails transiently.
+            });
+          break;
+        }
         case "NEW_CALLED_ITEM": {
           const gid = gameId.trim();
           if (!gid) {
@@ -367,8 +395,15 @@ export function PlayerCardPanel() {
             ? `${session.player_name}, you are playing ${session.game_title}.`
             : "Load a generated card by player and game ID."}{" "}
           Tap a square after the host calls that word to mark it, then press Bingo
-          when your card matches the game&apos;s winning pattern.
+          when your card completes <strong>any</strong> of this room&apos;s winning
+          patterns.
         </p>
+        {winningPatternsSummary ? (
+          <p className="mt-2 text-xs font-semibold text-slate-400">
+            Winning patterns for this room:{" "}
+            <span className="text-slate-100">{winningPatternsSummary}</span>
+          </p>
+        ) : null}
         {gameId.trim() ? (
           <p className="mt-2 text-xs font-semibold text-cyan-200/85">
             {wsStatus === "open"
@@ -493,9 +528,9 @@ export function PlayerCardPanel() {
         <ErrorMessage message={error} title="Could not load card" />
       </div>
 
-      {card ? (
+      {card && card.card_id !== null ? (
         <BingoCardGrid
-          card={card}
+          card={card as BingoCard & { card_id: number }}
           claimFeedback={claimFeedback}
           claimLoading={claimLoading}
           gameCompleted={gameCompleted}
@@ -506,7 +541,64 @@ export function PlayerCardPanel() {
           setCard={setCard}
           winStatus={winStatus}
         />
+      ) : card && card.card_id === null ? (
+        <WaitingRoom
+          gameTitle={session?.game_title ?? null}
+          playerName={session?.player_name ?? null}
+          wsStatus={wsStatus}
+        />
       ) : null}
+    </div>
+  );
+}
+
+type WaitingRoomProps = Readonly<{
+  gameTitle: string | null;
+  playerName: string | null;
+  wsStatus: string;
+}>;
+
+function WaitingRoom({ gameTitle, playerName, wsStatus }: WaitingRoomProps) {
+  return (
+    <div
+      className="rounded-3xl border border-cyan-300/30 bg-cyan-500/10 p-6 text-center"
+      role="status"
+      aria-live="polite"
+      data-testid="player-waiting-room"
+    >
+      <p className="text-xs font-black uppercase tracking-[0.28em] text-cyan-200">
+        You’re in the room
+      </p>
+      <p className="mt-3 text-lg font-black text-white sm:text-xl">
+        Waiting for the host to generate bingo cards.
+      </p>
+      <p className="mt-3 text-sm font-semibold text-slate-200">
+        {playerName ? (
+          <>
+            Joined as <strong className="text-white">{playerName}</strong>
+            {gameTitle ? (
+              <>
+                {" "}
+                in <strong className="text-white">{gameTitle}</strong>
+              </>
+            ) : null}
+            .
+          </>
+        ) : (
+          "You can leave this tab open — your card will appear here as soon as the host is ready."
+        )}
+      </p>
+      <div className="mt-5 flex items-center justify-center gap-3 text-xs font-semibold text-cyan-200/85">
+        <span
+          aria-hidden
+          className="inline-block size-3 animate-pulse rounded-full bg-cyan-300"
+        />
+        <span>
+          {wsStatus === "open"
+            ? "Listening for the host to generate cards…"
+            : "Reconnecting to the room…"}
+        </span>
+      </div>
     </div>
   );
 }

@@ -15,6 +15,17 @@ _TEST_DB_PATH = Path(__file__).resolve().parent / ".pytest_bingo.db"
 os.environ["DATABASE_URL"] = f"sqlite:///{_TEST_DB_PATH.as_posix()}"
 # Tests never call OpenAI; keep deterministic mock generation unless a test overrides.
 os.environ.setdefault("USE_MOCK_LLM", "true")
+# Isolate tests from the developer's real backend/.env SMTP credentials: explicit
+# empty env vars override .env values in pydantic-settings, so the default state is
+# "SMTP not configured" unless an individual test monkeypatches the Settings object.
+for _smtp_var in (
+    "SMTP_HOST",
+    "SMTP_FROM",
+    "SMTP_USERNAME",
+    "SMTP_USER",
+    "SMTP_PASSWORD",
+):
+    os.environ[_smtp_var] = ""
 
 import pytest
 from fastapi.testclient import TestClient

@@ -1,10 +1,14 @@
 "use client";
 
-import { FormEvent, useCallback, useState } from "react";
-import { sendGameInvites } from "@/lib/api/games";
+import { FormEvent, useCallback, useEffect, useState } from "react";
+import { getSmtpHealth, sendGameInvites } from "@/lib/api/games";
 import { ErrorMessage } from "@/components/ui/error-message";
 import { LoadingState } from "@/components/ui/loading-state";
-import type { GameInvitesResult } from "@/types/invite";
+import type {
+  GameInviteRecipient,
+  GameInvitesResult,
+  SmtpHealth,
+} from "@/types/invite";
 
 function parseParticipantEmails(raw: string): string[] {
   const tokens = raw
@@ -16,6 +20,17 @@ function parseParticipantEmails(raw: string): string[] {
 
 function fullInviteText(result: GameInvitesResult): string {
   return `${result.subject}\n\n${result.body_preview}`;
+}
+
+function recipientStatusBadgeClass(r: GameInviteRecipient): string {
+  switch (r.invite_status) {
+    case "SENT":
+      return "bg-emerald-400/15 text-emerald-200 border border-emerald-300/30";
+    case "FAILED":
+      return "bg-rose-500/15 text-rose-200 border border-rose-400/30";
+    default:
+      return "bg-cyan-400/15 text-cyan-200 border border-cyan-300/30";
+  }
 }
 
 type TeamsInvitesPanelProps = {
@@ -38,6 +53,25 @@ export function TeamsInvitesPanel({
   const [result, setResult] = useState<GameInvitesResult | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [copyFlash, setCopyFlash] = useState<string | null>(null);
+  const [smtpHealth, setSmtpHealth] = useState<SmtpHealth | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getSmtpHealth()
+      .then((health) => {
+        if (!cancelled) {
+          setSmtpHealth(health);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSmtpHealth(null);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const copy = useCallback(async (label: string, text: string) => {
     try {
@@ -101,22 +135,69 @@ export function TeamsInvitesPanel({
     }
   }
 
+  const smtpModeBadge = smtpHealth
+    ? smtpHealth.configured
+      ? {
+          label: "SMTP live send",
+          className:
+            "bg-emerald-400/15 text-emerald-200 border border-emerald-300/30",
+        }
+      : {
+          label: "Preview mode",
+          className: "bg-cyan-400/15 text-cyan-200 border border-cyan-300/30",
+        }
+    : {
+        label: "Checking SMTP…",
+        className: "bg-slate-700/40 text-slate-300 border border-white/10",
+      };
+
   return (
     <div className="mt-6 rounded-3xl border border-cyan-400/25 bg-slate-950/55 p-5 sm:p-6">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h3 className="text-xl font-black text-white">Send Teams Invites</h3>
           <p className="mt-2 text-sm text-slate-400">
-            Demo flow: collect participant emails and your Teams link. Without SMTP
-            settings on the server, invites are saved as{" "}
-            <strong className="text-cyan-200">preview</strong> and the email text
-            appears below for copy-paste into Outlook or Teams chat.
+            {smtpHealth?.configured
+              ? "Live SMTP is configured on the server. Submitting this form sends real emails to each recipient."
+              : "Without SMTP settings on the server, invites are saved as preview and the email text appears below for copy-paste into Outlook or Teams chat."}
           </p>
         </div>
-        <span className="shrink-0 rounded-full bg-cyan-400/15 px-3 py-1.5 text-xs font-black uppercase tracking-[0.14em] text-cyan-200">
-          Demo
+        <span
+          className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-black uppercase tracking-[0.14em] ${smtpModeBadge.className}`}
+        >
+          {smtpModeBadge.label}
         </span>
       </div>
+
+      {smtpHealth?.configured ? (
+        <p className="mt-3 text-xs text-emerald-300/80">
+          SMTP Configured{" "}
+          {smtpHealth.host ? (
+            <>
+              · host{" "}
+              <code className="rounded bg-slate-900/70 px-1.5 py-0.5 text-emerald-200">
+                {smtpHealth.host}
+              </code>
+            </>
+          ) : null}
+          {smtpHealth.port ? <> · port {smtpHealth.port}</> : null}
+          {smtpHealth.use_ssl ? " · SSL" : smtpHealth.use_tls ? " · TLS" : null}
+          {smtpHealth.has_credentials ? " · auth" : " · no auth"}
+        </p>
+      ) : smtpHealth ? (
+        <p className="mt-3 text-xs text-cyan-200/80">
+          SMTP is not configured on the backend. Set{" "}
+          <code className="rounded bg-slate-900/70 px-1.5 py-0.5 text-cyan-100">
+            SMTP_HOST
+          </code>
+          ,{" "}
+          <code className="rounded bg-slate-900/70 px-1.5 py-0.5 text-cyan-100">
+            SMTP_FROM
+          </code>{" "}
+          (and credentials) in <code>backend/.env</code> and restart the API to
+          enable real sending.
+        </p>
+      ) : null}
 
       <form className="mt-6 space-y-5" onSubmit={handleSubmit}>
         <label className="block">
@@ -181,16 +262,32 @@ export function TeamsInvitesPanel({
       ) : null}
 
       {result ? (
-        <div className="mt-6 space-y-4 rounded-2xl border border-emerald-400/30 bg-emerald-500/10 p-4">
+        <div
+          className={`mt-6 space-y-4 rounded-2xl border p-4 ${
+            result.mode === "sent"
+              ? "border-emerald-400/30 bg-emerald-500/10"
+              : "border-cyan-400/30 bg-cyan-500/10"
+          }`}
+        >
           <div className="flex flex-wrap items-center gap-3">
-            <p className="text-sm font-black uppercase tracking-[0.2em] text-emerald-200">
+            <p
+              className={`text-sm font-black uppercase tracking-[0.2em] ${
+                result.mode === "sent" ? "text-emerald-200" : "text-cyan-200"
+              }`}
+            >
               {result.mode === "sent"
-                ? "Emails sent (SMTP)"
-                : "Demo invite generated (preview)"}
+                ? "SMTP live send"
+                : "Preview generated (no SMTP)"}
             </p>
-            <span className="rounded-full bg-slate-950/50 px-3 py-1 text-xs font-bold text-emerald-100">
-              Mode: {result.mode}
+            <span className="rounded-full bg-slate-950/50 px-3 py-1 text-xs font-bold text-slate-100">
+              Sent {result.sent_count} · Failed {result.failed_count} ·{" "}
+              {result.recipients.length} recipients
             </span>
+            {result.smtp_host ? (
+              <span className="rounded-full bg-slate-950/50 px-3 py-1 text-xs font-bold text-slate-300">
+                via {result.smtp_host}
+              </span>
+            ) : null}
           </div>
 
           <div className="grid gap-3 text-sm sm:grid-cols-2">
@@ -235,13 +332,30 @@ export function TeamsInvitesPanel({
             <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">
               Recipients
             </p>
-            <ul className="mt-2 space-y-1 text-sm text-slate-200">
+            <ul className="mt-2 space-y-2 text-sm text-slate-200">
               {result.recipients.map((r) => (
-                <li key={r.email} className="flex flex-wrap gap-2">
-                  <span className="font-medium text-white">{r.email}</span>
-                  <span className="rounded bg-slate-800 px-2 py-0.5 text-xs font-bold text-slate-300">
-                    {r.invite_status}
-                  </span>
+                <li
+                  key={r.email}
+                  className="rounded-xl bg-slate-950/50 px-3 py-2"
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-semibold text-white">{r.email}</span>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-[11px] font-black uppercase tracking-[0.16em] ${recipientStatusBadgeClass(r)}`}
+                    >
+                      {r.invite_status}
+                    </span>
+                    {r.sent_at ? (
+                      <span className="text-[11px] font-semibold text-slate-500">
+                        {new Date(r.sent_at).toLocaleTimeString()}
+                      </span>
+                    ) : null}
+                  </div>
+                  {r.invite_status === "FAILED" && r.error_message ? (
+                    <p className="mt-1 text-xs text-rose-200/90">
+                      {r.error_message}
+                    </p>
+                  ) : null}
                 </li>
               ))}
             </ul>

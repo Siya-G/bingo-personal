@@ -2,7 +2,7 @@ import random
 import secrets
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.config import settings
@@ -22,13 +22,11 @@ def _card_cell_count() -> int:
 def generate_cards_for_game(game: Game, db: Session) -> list[BingoCardResponse]:
     """Create one 5x5 Bingo card for each player in a game.
 
-    Existing cards are returned as-is to keep repeated calls idempotent during
-    development and avoid accidentally replacing player cards.
+    Idempotent: players who already have a card keep theirs. Players who joined
+    before cards were generated (waiting-room flow) receive a fresh card on this
+    call. The response includes every assigned card in the room so the host UI
+    can confirm coverage.
     """
-    existing_cards = get_assigned_cards_for_game(game.id, db)
-    if existing_cards:
-        return [build_card_response(card) for card in existing_cards]
-
     players = list(
         db.scalars(
             select(Player).where(Player.game_id == game.id).order_by(Player.id.asc())
@@ -40,29 +38,31 @@ def generate_cards_for_game(game: Game, db: Session) -> list[BingoCardResponse]:
             detail="Cannot generate cards because this game has no players.",
         )
 
-    items = get_available_items_for_game(game.id, db)
-    cell_count = _card_cell_count()
+    players_with_cards = {
+        card.player_id for card in get_assigned_cards_for_game(game.id, db)
+    }
+    waiting_players = [p for p in players if p.id not in players_with_cards]
 
-    created_cards: list[BingoCard] = []
-    used_layouts: set[tuple[int, ...]] = set()
+    if waiting_players:
+        items = get_available_items_for_game(game.id, db)
+        cell_count = _card_cell_count()
+        used_layouts = get_existing_layouts_for_game(game_id=game.id, db=db)
 
-    for player in players:
-        card = create_card_for_player(
-            game_id=game.id,
-            player_id=player.id,
-            items=items,
-            used_layouts=used_layouts,
-            cell_count=cell_count,
-            db=db,
-        )
-        created_cards.append(card)
+        for player in waiting_players:
+            create_card_for_player(
+                game_id=game.id,
+                player_id=player.id,
+                items=items,
+                used_layouts=used_layouts,
+                cell_count=cell_count,
+                db=db,
+            )
 
-    db.commit()
+        db.commit()
 
     return [
         build_card_response(card)
-        for card in get_cards_for_game(game.id, db)
-        if card.id in {created_card.id for created_card in created_cards}
+        for card in get_assigned_cards_for_game(game.id, db)
     ]
 
 
@@ -70,8 +70,14 @@ def assign_card_to_player(
     game_id: int,
     player_id: int,
     db: Session,
-) -> BingoCardResponse:
-    """Assign an existing unclaimed card or create a fresh unique card."""
+) -> BingoCardResponse | None:
+    """Assign an existing unclaimed card or create a fresh unique card.
+
+    Returns ``None`` if the item pool is not yet large enough for a card. The
+    caller should treat that as the waiting-room state — the player joined, but
+    the host has not generated items yet. Cards will be issued for this player
+    automatically when the host calls ``POST /games/{id}/generate-cards``.
+    """
     existing_player_card = get_player_card(game_id=game_id, player_id=player_id, db=db)
     if existing_player_card is not None:
         return existing_player_card
@@ -87,6 +93,10 @@ def assign_card_to_player(
         db.commit()
         return get_required_player_card(game_id=game_id, player_id=player_id, db=db)
 
+    if not has_enough_items_for_card(game_id=game_id, db=db):
+        # Player joined before host generated items. Waiting room flow takes over.
+        return None
+
     items = get_available_items_for_game(game_id=game_id, db=db)
     used_layouts = get_existing_layouts_for_game(game_id=game_id, db=db)
     card = create_card_for_player(
@@ -100,6 +110,17 @@ def assign_card_to_player(
     db.commit()
 
     return get_required_player_card(game_id=game_id, player_id=card.player_id, db=db)
+
+
+def has_enough_items_for_card(game_id: int, db: Session) -> bool:
+    """True when the shared pool has at least ``bingo_card_cell_count`` rows."""
+    count = (
+        db.scalar(
+            select(func.count(BingoItem.id)).where(BingoItem.game_id == game_id)
+        )
+        or 0
+    )
+    return count >= settings.bingo_card_cell_count
 
 
 def get_player_card(

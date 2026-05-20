@@ -10,7 +10,8 @@ from fastapi.responses import JSONResponse
 
 from app.config import BACKEND_ENV_FILE, settings
 from app.database.connection import create_database_tables
-from app.routes import games_router, health_router, websocket_router
+from app.routes import chat_router, games_router, health_router, websocket_router
+from app.services.smtp_mailer import log_smtp_startup_status
 from app.services.websocket_manager import set_broadcast_loop
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         BACKEND_ENV_FILE.is_file(),
     )
     create_database_tables()
+    log_smtp_startup_status(settings)
     set_broadcast_loop(asyncio.get_running_loop())
     yield
 
@@ -83,6 +85,7 @@ def create_app() -> FastAPI:
 
     app.include_router(health_router)
     app.include_router(games_router)
+    app.include_router(chat_router)
     app.include_router(websocket_router)
 
     return app
