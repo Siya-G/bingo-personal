@@ -25,10 +25,17 @@ class Settings(BaseSettings):
     app_name: str = "AI Bingo API"
     environment: str = "development"
     database_url: str = "sqlite:///./bingo.db"
-    cors_origins: list[str] = [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ]
+    cors_origins: list[str] = Field(
+        default_factory=lambda: [
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+            "https://bingo-personal.vercel.app",
+        ],
+        description=(
+            "Allowed browser origins for CORS. Override via CORS_ORIGINS "
+            '(JSON array), e.g. ["https://bingo-personal.vercel.app"].'
+        ),
+    )
     # Public Bingo UI origin for invite links (no secrets).
     frontend_base_url: str = "http://127.0.0.1:3000"
     # Optional SMTP — when ``smtp_host`` is empty, invites stay preview-only.
