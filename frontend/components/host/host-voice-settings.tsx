@@ -1,12 +1,16 @@
 "use client";
 
+import { BingoCallerVoice } from "@/components/host/bingo-caller-voice";
+import { useLiveGameSession } from "@/hooks/useLiveGameSession";
 import { useSpeechSynthesis } from "@/hooks/useSpeechSynthesis";
+import { NARRATION_UNAVAILABLE_MESSAGE } from "@/lib/speak-bingo-item";
 
 const SAMPLE_PHRASE =
   "Welcome to Bingo. I will call each word with a short fun fact.";
 
 export function HostVoiceSettings() {
   const speech = useSpeechSynthesis();
+  const { gameId: liveGameId, hostPin: liveHostPin } = useLiveGameSession();
 
   function handleTestVoice() {
     speech.cancel();
@@ -35,7 +39,7 @@ export function HostVoiceSettings() {
 
       {!speech.supported ? (
         <p className="mt-4 rounded-2xl border border-amber-300/30 bg-amber-500/10 p-4 text-sm font-semibold text-amber-100">
-          Speech synthesis is not available in this browser.
+          {NARRATION_UNAVAILABLE_MESSAGE}
         </p>
       ) : null}
 
@@ -61,7 +65,10 @@ export function HostVoiceSettings() {
 
         <div className="grid gap-4">
           <label className="block">
-            <span className="text-sm font-bold uppercase tracking-[0.2em] text-yellow-200">
+            <span
+              suppressHydrationWarning
+              className="text-sm font-bold uppercase tracking-[0.2em] text-yellow-200"
+            >
               Rate ({speech.settings.rate.toFixed(1)})
             </span>
             <input
@@ -78,7 +85,10 @@ export function HostVoiceSettings() {
             />
           </label>
           <label className="block">
-            <span className="text-sm font-bold uppercase tracking-[0.2em] text-yellow-200">
+            <span
+              suppressHydrationWarning
+              className="text-sm font-bold uppercase tracking-[0.2em] text-yellow-200"
+            >
               Pitch ({speech.settings.pitch.toFixed(1)})
             </span>
             <input
@@ -95,7 +105,10 @@ export function HostVoiceSettings() {
             />
           </label>
           <label className="block">
-            <span className="text-sm font-bold uppercase tracking-[0.2em] text-yellow-200">
+            <span
+              suppressHydrationWarning
+              className="text-sm font-bold uppercase tracking-[0.2em] text-yellow-200"
+            >
               Volume ({speech.settings.volume.toFixed(1)})
             </span>
             <input
@@ -111,6 +124,23 @@ export function HostVoiceSettings() {
               value={speech.settings.volume}
             />
           </label>
+        </div>
+      </div>
+
+      <div
+        className="mt-8 border-t border-white/10 pt-8"
+        data-testid="bingo-caller-voice-section"
+      >
+        <h3 className="text-lg font-black text-white">Bingo Caller Voice</h3>
+        <p className="mt-2 text-sm text-slate-400">
+          Record your voice — AI will call items in your voice during this game.
+        </p>
+        <div className="mt-6">
+          <BingoCallerVoice
+            embedded
+            gameId={liveGameId}
+            hostPin={liveHostPin}
+          />
         </div>
       </div>
     </div>

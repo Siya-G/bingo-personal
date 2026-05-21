@@ -10,7 +10,11 @@ import type { GameLeaderboard } from "@/types/leaderboard";
 import type { PrizeNotification } from "@/types/prize";
 import type { CalledItem } from "@/types/gameplay";
 import type { BingoCard } from "@/types/card";
-import type { JoinGamePayload, JoinGameResponse } from "@/types/player";
+import type {
+  GameRoomPlayer,
+  JoinGamePayload,
+  JoinGameResponse,
+} from "@/types/player";
 import type {
   GameInvitesResult,
   SendGameInvitesPayload,
@@ -163,6 +167,20 @@ export async function getGame(gameId: string): Promise<Game> {
   return response.json() as Promise<Game>;
 }
 
+export async function listGamePlayers(gameId: string): Promise<GameRoomPlayer[]> {
+  const response = await fetch(`${API_BASE_URL}/games/${gameId}/players`);
+
+  if (!response.ok) {
+    const message = await readApiErrorDetail(
+      response,
+      "Unable to load players in this room.",
+    );
+    throw new Error(message);
+  }
+
+  return response.json() as Promise<GameRoomPlayer[]>;
+}
+
 export async function getLeaderboard(gameId: string): Promise<GameLeaderboard> {
   const response = await fetch(`${API_BASE_URL}/games/${gameId}/leaderboard`);
 
@@ -302,6 +320,7 @@ export type GenerateGameItemsResult = {
   actual_count: number;
   minimum_count: number;
   warning: string | null;
+  cached: boolean;
 };
 
 export async function generateGameItems(
@@ -335,6 +354,7 @@ export async function generateGameItems(
       actual_count: items.length,
       minimum_count: 25,
       warning: null,
+      cached: false,
     };
   }
 
@@ -344,6 +364,7 @@ export async function generateGameItems(
     actual_count?: number;
     minimum_count?: number;
     warning?: string | null;
+    cached?: boolean;
   };
   const items = body.items ?? [];
   return {
@@ -352,6 +373,7 @@ export async function generateGameItems(
     actual_count: body.actual_count ?? items.length,
     minimum_count: body.minimum_count ?? 25,
     warning: body.warning ?? null,
+    cached: body.cached ?? false,
   };
 }
 

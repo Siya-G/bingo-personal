@@ -19,3 +19,9 @@ venv/
 
 # Logs
 *.log
+
+# Host voice samples (local uploads — not served publicly)
+storage/voice_samples/
+
+# Generated TTS audio (runtime cache)
+storage/tts_cache/

@@ -40,7 +40,7 @@ export function HostPrizeNotifications({
         <p className="mt-1 text-sm text-slate-400">
           On-screen notices for each confirmed placement.{" "}
           <span className="font-semibold text-amber-100/90">
-            MVP only: email and gift card workflows are not connected yet.
+            Prize email and gift card delivery are not available yet.
           </span>
         </p>
       </div>

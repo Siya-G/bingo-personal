@@ -10,6 +10,7 @@ import {
 } from "@/lib/api/games";
 import { readPlayerGameSession } from "@/lib/player-session";
 import { formatWinningPatternsList } from "@/lib/winning-patterns";
+import { BingoWinCelebration } from "@/components/game/bingo-win-celebration";
 import { ButtonLink } from "@/components/ui/button-link";
 import { ErrorMessage } from "@/components/ui/error-message";
 import { LoadingState } from "@/components/ui/loading-state";
@@ -69,6 +70,9 @@ export function PlayerCardPanel() {
   const [roomMessage, setRoomMessage] = useState<string | null>(null);
   const [playerPrizeNotice, setPlayerPrizeNotice] =
     useState<PrizeNotification | null>(null);
+  const [showBingoCelebration, setShowBingoCelebration] = useState(false);
+  const [celebrationPlayerName, setCelebrationPlayerName] = useState("");
+  const [celebrationPlacement, setCelebrationPlacement] = useState<number | null>(null);
 
   const gameCompleted = gameStatus === "COMPLETED";
 
@@ -361,6 +365,13 @@ export function PlayerCardPanel() {
         player_id: result.player_id,
         player_name: result.player_name,
       });
+      if (result.success) {
+        setCelebrationPlayerName(
+          result.player_name ?? session?.player_name ?? "You",
+        );
+        setCelebrationPlacement(result.rank ?? null);
+        setShowBingoCelebration(true);
+      }
       void hydratePrizeNotice(gameId, playerId);
       try {
         const game = await getGame(gameId);
@@ -390,14 +401,6 @@ export function PlayerCardPanel() {
     <div className="space-y-5">
       <div>
         <h2 className="text-2xl font-black text-white">Your Bingo Card</h2>
-        <p className="mt-2 text-sm text-slate-300">
-          {session
-            ? `${session.player_name}, you are playing ${session.game_title}.`
-            : "Load a generated card by player and game ID."}{" "}
-          Tap a square after the host calls that word to mark it, then press Bingo
-          when your card completes <strong>any</strong> of this room&apos;s winning
-          patterns.
-        </p>
         {winningPatternsSummary ? (
           <p className="mt-2 text-xs font-semibold text-slate-400">
             Winning patterns for this room:{" "}
@@ -548,6 +551,14 @@ export function PlayerCardPanel() {
           wsStatus={wsStatus}
         />
       ) : null}
+
+      <BingoWinCelebration
+        gameId={gameId}
+        onDismiss={() => setShowBingoCelebration(false)}
+        open={showBingoCelebration}
+        placement={celebrationPlacement}
+        playerName={celebrationPlayerName}
+      />
     </div>
   );
 }

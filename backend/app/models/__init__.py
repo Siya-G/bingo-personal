@@ -13,6 +13,7 @@ from app.models.game import (
     Winner,
 )
 from app.models.prize_notification import PrizeNotification
+from app.models.topic_item_cache import TopicItemCache
 
 __all__ = [
     "AuditEvent",
@@ -26,5 +27,6 @@ __all__ = [
     "ModerationEvent",
     "Player",
     "PrizeNotification",
+    "TopicItemCache",
     "Winner",
 ]

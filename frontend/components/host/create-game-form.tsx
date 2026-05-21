@@ -3,8 +3,10 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { ErrorMessage } from "@/components/ui/error-message";
 import { LoadingState } from "@/components/ui/loading-state";
+import { getPublicApiBaseUrl } from "@/lib/api/base-url";
 import { createGame } from "@/lib/api/games";
 import { saveHostPinForGame } from "@/lib/host-credentials";
+import { saveLiveGameId } from "@/lib/live-game-session";
 import {
   WINNING_PATTERN_OPTIONS,
   formatWinningPatternsList,
@@ -21,7 +23,11 @@ const initialFormState = {
   hostPin: "",
 };
 
-export function CreateGameForm() {
+type CreateGameFormProps = Readonly<{
+  onGameCreated?: (game: Game, hostPin: string) => void;
+}>;
+
+export function CreateGameForm({ onGameCreated }: CreateGameFormProps = {}) {
   const [title, setTitle] = useState(initialFormState.title);
   const [topic, setTopic] = useState(initialFormState.topic);
   const [numberOfPlayers, setNumberOfPlayers] = useState(
@@ -32,21 +38,19 @@ export function CreateGameForm() {
   ]);
   const [hostPin, setHostPin] = useState(initialFormState.hostPin);
   const [createdGame, setCreatedGame] = useState<Game | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [createGameError, setCreateGameError] = useState<string | null>(null);
+  const [isCreatingGame, setIsCreatingGame] = useState(false);
   const errorBoxRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (!error) {
+    if (!createGameError) {
       return;
     }
     const node = errorBoxRef.current;
-    // ``scrollIntoView`` is missing in jsdom (test env); also harmless to skip
-    // if the element is detached.
     if (node && typeof node.scrollIntoView === "function") {
       node.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
-  }, [error]);
+  }, [createGameError]);
 
   function togglePattern(pattern: WinningPattern) {
     setSelectedPatterns((prev) => {
@@ -60,40 +64,76 @@ export function CreateGameForm() {
     });
   }
 
+  function validateCreateGameForm(): string | null {
+    const trimmedTitle = title.trim();
+    const trimmedTopic = topic.trim();
+    const trimmedPin = hostPin.trim();
+    const playerCount = Number(numberOfPlayers);
+
+    if (!trimmedTitle) {
+      return "Game title is required.";
+    }
+    if (!trimmedTopic) {
+      return "Topic is required.";
+    }
+    if (trimmedPin.length < 4) {
+      return "Host PIN must be at least 4 characters.";
+    }
+    if (!Number.isFinite(playerCount) || playerCount < 1 || playerCount > 500) {
+      return "Number of players must be between 1 and 500.";
+    }
+    if (selectedPatterns.length === 0) {
+      return "Select at least one winning pattern.";
+    }
+    return null;
+  }
+
   async function handleSubmit(event?: FormEvent<HTMLFormElement>) {
-    // ``preventDefault`` is still called for the Enter-in-input keyboard path
-    // (the submit button itself is ``type="button"`` so a mouse click never
-    // dispatches a ``submit`` event).
-    event?.preventDefault();
-    setError(null);
-    setCreatedGame(null);
-    setIsSubmitting(true);
+    if (event) {
+      event.preventDefault();
+      console.log("preventDefault called");
+    }
+    console.log("Create Game clicked");
+
+    const validationError = validateCreateGameForm();
+    if (validationError) {
+      console.log("Create Game validation failed:", validationError);
+      setCreateGameError(validationError);
+      return;
+    }
+
+    const ordered = sortPatternsByOptionOrder([...selectedPatterns]);
+    const payload = {
+      title: title.trim(),
+      topic: topic.trim(),
+      number_of_players: Number(numberOfPlayers),
+      winning_patterns: ordered,
+      winning_pattern: ordered[0],
+      host_pin: hostPin.trim(),
+    };
+    const url = `${getPublicApiBaseUrl()}/games`;
+    console.log("payload", payload);
+    console.log("API URL", url);
+
+    setCreateGameError(null);
+    setIsCreatingGame(true);
 
     try {
-      const ordered = sortPatternsByOptionOrder([...selectedPatterns]);
-      const game = await createGame({
-        title: title.trim(),
-        topic: topic.trim(),
-        number_of_players: Number(numberOfPlayers),
-        winning_patterns: ordered,
-        winning_pattern: ordered[0],
-        host_pin: hostPin.trim(),
-      });
-
-      saveHostPinForGame(String(game.id), hostPin.trim());
-      // Form state stays as-is on success; only the green result card appears.
+      const game = await createGame(payload);
+      console.log("response status", 201, "body", game);
+      const trimmedPin = hostPin.trim();
+      saveHostPinForGame(String(game.id), trimmedPin);
+      saveLiveGameId(String(game.id));
       setCreatedGame(game);
+      onGameCreated?.(game, trimmedPin);
     } catch (caughtError) {
       const message =
         caughtError instanceof Error
           ? caughtError.message
           : "Unable to create game. Please try again.";
-      // Single diagnostic line in DevTools so the user can see the exact
-      // URL/status/CORS detail when the visible alert isn't enough.
-      console.error("[CreateGameForm] POST /games failed:", caughtError);
-      setError(message);
+      setCreateGameError(message);
     } finally {
-      setIsSubmitting(false);
+      setIsCreatingGame(false);
     }
   }
 
@@ -107,34 +147,27 @@ export function CreateGameForm() {
 
   return (
     <div className="rounded-3xl bg-slate-950/50 p-5 sm:p-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h2 className="text-2xl font-black text-white">Create Game</h2>
-          <p className="mt-2 text-sm text-slate-300">
-            Configure the lobby basics, set a host PIN for later controls, then
-            generate items and cards from the live gameplay panel.
-          </p>
-        </div>
-        <span className="rounded-full bg-emerald-400/15 px-4 py-2 text-sm font-bold text-emerald-200">
-          Host setup
-        </span>
+      <div>
+        <h2 className="text-2xl font-black text-white">Create Game</h2>
+        <p className="mt-2 text-sm text-slate-300">
+          Configure the lobby basics, set a host PIN for later controls, then
+          generate items and cards from the live gameplay panel.
+        </p>
       </div>
 
       <div className="mt-5" ref={errorBoxRef}>
-        <ErrorMessage message={error} title="Could not create game" />
+        <ErrorMessage message={createGameError} title="Could not create game" />
       </div>
 
       <form
-        // The submit button is ``type="button"`` (see below) so a normal mouse
-        // click never dispatches a ``submit`` event and the browser cannot do a
-        // default GET-to-current-URL navigation. ``onSubmit`` is still wired so
-        // pressing Enter inside a text input works — but ``preventDefault`` is
-        // called first to neutralise any pre-hydration race (observed on
-        // Next.js 16 / Turbopack dev builds, where clicks racing hydration
-        // reloaded the page as ``/host?``).
+        action="#"
         noValidate
         className="mt-6 grid gap-5"
-        onSubmit={handleSubmit}
+        onSubmit={(event) => {
+          event.preventDefault();
+          console.log("preventDefault called");
+          void handleSubmit(event);
+        }}
       >
         <label className="block">
           <span className="text-sm font-bold uppercase tracking-[0.2em] text-yellow-200">
@@ -169,7 +202,8 @@ export function CreateGameForm() {
             Host PIN
           </span>
           <input
-            autoComplete="new-password"
+            suppressHydrationWarning
+            autoComplete="off"
             className="mt-2 w-full rounded-2xl border border-white/10 bg-white/10 px-4 py-4 text-white outline-none placeholder:text-slate-500 focus:border-yellow-300/70"
             minLength={4}
             onChange={(event) => setHostPin(event.target.value)}
@@ -179,9 +213,8 @@ export function CreateGameForm() {
             value={hostPin}
           />
           <p className="mt-2 text-xs text-slate-500">
-            Used for generate items/cards, start/call, and audit trail. MVP only:
-            replace with real auth before production — never ship API keys in the
-            browser bundle.
+            Used for generate items/cards, start/call, and audit trail. Keep this
+            PIN private — only the host should know it.
           </p>
         </label>
 
@@ -229,17 +262,20 @@ export function CreateGameForm() {
           </fieldset>
         </div>
 
-        <LoadingState active={isSubmitting} label="Creating game…" />
+        <LoadingState active={isCreatingGame} label="Creating game…" />
 
         <button
           className="rounded-full bg-yellow-300 px-5 py-4 text-sm font-black uppercase tracking-[0.18em] text-slate-950 shadow-lg shadow-yellow-500/30 transition hover:bg-yellow-200 disabled:cursor-not-allowed disabled:opacity-60"
-          disabled={isSubmitting}
-          onClick={() => {
+          disabled={isCreatingGame}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            console.log("preventDefault called");
             void handleSubmit();
           }}
           type="button"
         >
-          Create Game
+          {isCreatingGame ? "Creating game…" : "Create Game"}
         </button>
       </form>
 

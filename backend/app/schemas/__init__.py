@@ -23,6 +23,8 @@ from app.schemas.game import (
     PlayerResponse,
     PlayerWinnerStatusResponse,
     PrizeNotificationResponse,
+    PrizeSendRequest,
+    PrizeSendResponse,
 )
 
 __all__ = [
@@ -49,4 +51,6 @@ __all__ = [
     "PlayerResponse",
     "PlayerWinnerStatusResponse",
     "PrizeNotificationResponse",
+    "PrizeSendRequest",
+    "PrizeSendResponse",
 ]

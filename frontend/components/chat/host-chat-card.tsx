@@ -5,27 +5,86 @@ import { useEffect, useState, startTransition } from "react";
 import { ChatPanel } from "@/components/chat/chat-panel";
 import { readHostPinForGame } from "@/lib/host-credentials";
 
-/**
- * Host-side wrapper: keeps a local ``gameId`` + ``hostPin`` so the host can
- * chat without lifting state from GameplayControls. The PIN auto-fills from
- * the per-tab credential cache that GameplayControls already populates after
- * a successful Generate Items call.
- */
-export function HostChatCard() {
+type HostChatCardProps = Readonly<{
+  /** Slide-in panel: game ID and PIN come from the page, not manual entry. */
+  slideIn?: boolean;
+  gameId?: string;
+  hostPin?: string;
+  /** @deprecated Floating popup layout */
+  embedded?: boolean;
+}>;
+
+export function HostChatCard({
+  slideIn = false,
+  gameId: gameIdProp = "",
+  hostPin: hostPinProp = "",
+  embedded = false,
+}: HostChatCardProps) {
   const [gameId, setGameId] = useState("");
   const [hostPin, setHostPin] = useState("");
   const [hostLabel, setHostLabel] = useState("Host");
 
+  const resolvedGameId = slideIn ? gameIdProp.trim() : gameId.trim();
+  const resolvedHostPin = slideIn
+    ? hostPinProp.trim() ||
+      (resolvedGameId ? readHostPinForGame(resolvedGameId) ?? "" : "")
+    : hostPin.trim();
+
   useEffect(() => {
+    if (slideIn) {
+      return;
+    }
     const trimmed = gameId.trim();
     startTransition(() => {
       setHostPin(trimmed ? readHostPinForGame(trimmed) ?? "" : "");
     });
-  }, [gameId]);
+  }, [gameId, slideIn]);
+
+  if (slideIn) {
+    if (!resolvedGameId) {
+      return (
+        <p className="text-center text-sm font-semibold text-slate-400">
+          Create a game or enter your game ID in Live Gameplay to open room chat.
+        </p>
+      );
+    }
+
+    return (
+      <div className="flex h-full min-h-0 flex-col gap-3">
+        <label className="block shrink-0">
+          <span className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">
+            Display name
+          </span>
+          <input
+            aria-label="Host display name"
+            className="mt-1 w-full rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-500 focus:border-yellow-300/70"
+            onChange={(event) => setHostLabel(event.target.value)}
+            placeholder="Host"
+            type="text"
+            value={hostLabel}
+          />
+        </label>
+        <ChatPanel
+          gameId={resolvedGameId}
+          hostPin={resolvedHostPin}
+          role="HOST"
+          senderId={null}
+          senderName={hostLabel.trim() || "Host"}
+          slideIn
+        />
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-[1fr_1fr_1fr]">
+    <div className={embedded ? "flex min-h-0 flex-col gap-3" : "space-y-4"}>
+      <div
+        className={
+          embedded
+            ? "grid gap-2"
+            : "grid gap-3 sm:grid-cols-[1fr_1fr_1fr]"
+        }
+      >
         <input
           aria-label="Host display name"
           className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-yellow-300/70"
@@ -45,27 +104,30 @@ export function HostChatCard() {
         />
         <input
           aria-label="Host PIN for chat"
+          autoComplete="off"
           className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-yellow-300/70"
           onChange={(event) => setHostPin(event.target.value)}
           placeholder="Host PIN"
           type="password"
           value={hostPin}
-          autoComplete="off"
         />
       </div>
 
-      <p className="text-xs text-slate-400">
-        Chat opens once the Game ID is set. The host PIN auto-fills if you have
-        already entered it in Live Gameplay for this room (per-tab session
-        storage; no PIN is sent to the chat history endpoint).
-      </p>
+      {!embedded ? (
+        <p className="text-xs text-slate-400">
+          Chat opens once the Game ID is set. The host PIN auto-fills if you have
+          already entered it in Live Gameplay for this room (per-tab session
+          storage; no PIN is sent to the chat history endpoint).
+        </p>
+      ) : null}
 
       <ChatPanel
-        gameId={gameId.trim() || null}
+        embedded={embedded}
+        gameId={resolvedGameId || null}
+        hostPin={resolvedHostPin}
         role="HOST"
-        senderName={hostLabel.trim() || "Host"}
         senderId={null}
-        hostPin={hostPin}
+        senderName={hostLabel.trim() || "Host"}
       />
     </div>
   );

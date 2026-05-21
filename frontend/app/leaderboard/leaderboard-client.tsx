@@ -4,7 +4,6 @@ import { FormEvent, Suspense, useEffect, useState, startTransition } from "react
 import { useSearchParams } from "next/navigation";
 import { getLeaderboard, getPrizeNotifications } from "@/lib/api/games";
 import { useGameSocket } from "@/hooks/useGameSocket";
-import { ButtonLink } from "@/components/ui/button-link";
 import { ErrorMessage } from "@/components/ui/error-message";
 import { LoadingState } from "@/components/ui/loading-state";
 import { PageHeader } from "@/components/ui/page-header";
@@ -19,57 +18,100 @@ function winnerAtRank(
   return winners.find((entry) => entry.rank === rank);
 }
 
-function formatWhen(iso: string) {
-  try {
-    return new Date(iso).toLocaleString();
-  } catch {
-    return iso;
-  }
-}
+type PodiumBlockConfig = Readonly<{
+  rank: 1 | 2 | 3;
+  heightPx: number;
+  accentColor: string;
+  medal: string;
+  placeLabel: string;
+}>;
 
-function prizeMessageForWinner(
-  prizes: PrizeNotification[],
-  winner: LeaderboardWinner | undefined,
-): string | null {
-  if (!winner) {
-    return null;
-  }
-  const row = prizes.find(
-    (p) => p.player_id === winner.player_id && p.rank === winner.rank,
-  );
-  return row?.message ?? null;
-}
+const PODIUM_BLOCKS: PodiumBlockConfig[] = [
+  {
+    rank: 2,
+    heightPx: 160,
+    accentColor: "#C0C0C0",
+    medal: "🥈",
+    placeLabel: "2ND",
+  },
+  {
+    rank: 1,
+    heightPx: 200,
+    accentColor: "#F5C518",
+    medal: "🥇",
+    placeLabel: "1ST",
+  },
+  {
+    rank: 3,
+    heightPx: 130,
+    accentColor: "#CD7F32",
+    medal: "🥉",
+    placeLabel: "3RD",
+  },
+];
 
-function PodiumCard({
-  placeLabel,
-  prizeMessage,
+function PodiumBlock({
+  config,
   winner,
 }: Readonly<{
-  placeLabel: string;
-  prizeMessage: string | null;
+  config: PodiumBlockConfig;
   winner: LeaderboardWinner | undefined;
 }>) {
   return (
-    <div className="flex flex-col rounded-3xl border border-white/10 bg-slate-950/55 p-6 text-center shadow-lg shadow-slate-950/30">
-      <span className="text-xs font-black uppercase tracking-[0.22em] text-yellow-200">
-        {placeLabel}
-      </span>
-      {winner ? (
-        <div className="mt-4 flex flex-1 flex-col gap-2">
-          <p className="text-2xl font-black text-white">{winner.player_name}</p>
-          <p className="text-sm text-slate-400">Player #{winner.player_id}</p>
-          {prizeMessage ? (
-            <p className="mt-2 text-xs font-medium italic leading-relaxed text-amber-100/90">
-              {prizeMessage}
+    <div
+      className="flex min-w-0 flex-1 max-w-[220px] flex-col"
+      style={{ height: config.heightPx }}
+    >
+      <div
+        className="flex h-full flex-col rounded-t-lg border border-white/10 border-b-0 bg-slate-950/90 shadow-lg shadow-black/30"
+        style={{ borderTopColor: config.accentColor, borderTopWidth: 3 }}
+      >
+        <span
+          aria-hidden
+          className="mt-4 text-center text-xl leading-none text-slate-300"
+        >
+          {config.medal}
+        </span>
+        <div className="flex flex-1 items-center justify-center px-3 py-4 text-center">
+          {winner ? (
+            <p className="text-lg font-bold leading-snug text-white sm:text-xl">
+              {winner.player_name}
             </p>
-          ) : null}
-          <p className="mt-auto text-xs text-slate-500">{formatWhen(winner.created_at)}</p>
+          ) : (
+            <p className="text-sm font-semibold text-slate-500">Waiting...</p>
+          )}
         </div>
-      ) : (
-        <p className="mt-6 flex-1 text-sm font-semibold text-slate-500">
-          Waiting for a winner…
+        <p
+          className="pb-4 text-center text-xs font-black tracking-[0.22em]"
+          style={{ color: config.accentColor }}
+        >
+          {config.placeLabel}
         </p>
-      )}
+      </div>
+    </div>
+  );
+}
+
+function LeaderboardPodium({
+  winners,
+}: Readonly<{
+  winners: LeaderboardWinner[];
+}>) {
+  return (
+    <div className="w-full rounded-2xl border border-white/10 bg-slate-950/40 px-4 py-6 sm:px-6">
+      <div className="flex items-end justify-center gap-3">
+        {PODIUM_BLOCKS.map((config) => (
+          <PodiumBlock
+            config={config}
+            key={config.rank}
+            winner={winnerAtRank(winners, config.rank)}
+          />
+        ))}
+      </div>
+      <div
+        aria-hidden
+        className="mt-0 h-1 w-full bg-slate-900/90"
+      />
     </div>
   );
 }
@@ -205,15 +247,6 @@ function LeaderboardInner() {
       <PageHeader
         eyebrow="Leaderboard"
         title="Top three on the podium."
-        description="Enter a game ID to see validated Bingo winners, live status, and when each placement was recorded. After loading, the podium updates live over the WebSocket."
-        actions={
-          <>
-            <ButtonLink href="/game">Player game</ButtonLink>
-            <ButtonLink href="/host" variant="secondary">
-              Host dashboard
-            </ButtonLink>
-          </>
-        }
       />
 
       <Panel>
@@ -250,20 +283,6 @@ function LeaderboardInner() {
         {!activeGameId ? (
           <div className="mt-6 rounded-2xl border border-white/10 bg-slate-950/50 p-8 text-center">
             <h3 className="text-lg font-black text-white">No game loaded yet</h3>
-            <p className="mx-auto mt-2 max-w-md text-sm text-slate-400">
-              Enter a game ID and press <strong className="text-slate-200">Load</strong>{" "}
-              to see the podium, or open this page with{" "}
-              <code className="rounded bg-white/10 px-2 py-0.5 text-yellow-100">
-                ?gameId=…
-              </code>{" "}
-              in the URL.
-            </p>
-            <div className="mt-5 flex flex-wrap justify-center gap-3">
-              <ButtonLink href="/host">Host dashboard</ButtonLink>
-              <ButtonLink href="/join" variant="secondary">
-                Join a game
-              </ButtonLink>
-            </div>
           </div>
         ) : (
           <p className="mt-4 text-xs font-semibold text-cyan-200/85">
@@ -301,43 +320,7 @@ function LeaderboardInner() {
               </div>
             ) : null}
 
-            {data.winners.length === 0 ? (
-              <div className="rounded-2xl border border-white/10 bg-slate-950/45 p-8 text-center">
-                <h3 className="text-lg font-black text-white">No winners yet</h3>
-                <p className="mx-auto mt-2 max-w-lg text-sm text-slate-400">
-                  When validated Bingo claims are recorded, first through third place
-                  appear here. Keep this page open — the podium updates over the
-                  WebSocket after each win.
-                </p>
-              </div>
-            ) : null}
-
-            <div className="grid gap-4 lg:grid-cols-3">
-              <PodiumCard
-                placeLabel="1st place"
-                prizeMessage={prizeMessageForWinner(
-                  prizeRows,
-                  winnerAtRank(data.winners, 1),
-                )}
-                winner={winnerAtRank(data.winners, 1)}
-              />
-              <PodiumCard
-                placeLabel="2nd place"
-                prizeMessage={prizeMessageForWinner(
-                  prizeRows,
-                  winnerAtRank(data.winners, 2),
-                )}
-                winner={winnerAtRank(data.winners, 2)}
-              />
-              <PodiumCard
-                placeLabel="3rd place"
-                prizeMessage={prizeMessageForWinner(
-                  prizeRows,
-                  winnerAtRank(data.winners, 3),
-                )}
-                winner={winnerAtRank(data.winners, 3)}
-              />
-            </div>
+            <LeaderboardPodium winners={data.winners} />
           </div>
         ) : null}
       </Panel>

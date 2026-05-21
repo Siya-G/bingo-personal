@@ -7,7 +7,12 @@ import {
   writeHostVoiceSettings,
   type HostVoiceSettings,
 } from "@/lib/host-voice-settings";
-import { formatCalledItemForSpeech } from "@/lib/speech-utils";
+import {
+  cancelBingoSpeech,
+  isSpeechSynthesisAvailable,
+  speakBingoItem,
+  speakNarrationText,
+} from "@/lib/speak-bingo-item";
 
 export type UseSpeechSynthesisResult = {
   supported: boolean;
@@ -19,12 +24,7 @@ export type UseSpeechSynthesisResult = {
   setPitch: (pitch: number) => void;
   setVolume: (volume: number) => void;
   setNarrationEnabled: (enabled: boolean) => void;
-  /** Cancel any in-progress speech (e.g. before a new call). */
   cancel: () => void;
-  /**
-   * Speak arbitrary text using persisted host voice settings.
-   * Use `force: true` to ignore the narration toggle (e.g. explicit replay).
-   */
   speak: (text: string, options?: { force?: boolean }) => void;
   speakCalledItem: (item: CalledItem, options?: { force?: boolean }) => void;
 };
@@ -43,7 +43,6 @@ export function useSpeechSynthesis(): UseSpeechSynthesisResult {
     readHostVoiceSettings(),
   );
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
 
   const refreshSettings = useCallback(() => {
@@ -56,8 +55,7 @@ export function useSpeechSynthesis(): UseSpeechSynthesisResult {
       setVoices([]);
       return;
     }
-    const list = synth.getVoices();
-    setVoices(list);
+    setVoices(synth.getVoices());
   }, []);
 
   useEffect(() => {
@@ -68,9 +66,9 @@ export function useSpeechSynthesis(): UseSpeechSynthesisResult {
         return;
       }
 
-      const synth = getSpeechSynthesis();
-      setSupported(Boolean(synth));
+      setSupported(isSpeechSynthesisAvailable());
 
+      const synth = getSpeechSynthesis();
       if (!synth) {
         return;
       }
@@ -96,68 +94,33 @@ export function useSpeechSynthesis(): UseSpeechSynthesisResult {
       alive = false;
       cleanupRef.current?.();
       cleanupRef.current = null;
-      getSpeechSynthesis()?.cancel();
     };
   }, [loadVoices, refreshSettings]);
 
+  const onSpeakingChange = useCallback((speaking: boolean) => {
+    setIsSpeaking(speaking);
+  }, []);
+
   const cancel = useCallback(() => {
-    const synth = getSpeechSynthesis();
-    if (!synth) {
-      return;
-    }
-    synth.cancel();
-    utteranceRef.current = null;
+    cancelBingoSpeech();
     setIsSpeaking(false);
   }, []);
 
   const speak = useCallback(
     (text: string, options?: { force?: boolean }) => {
-      const synth = getSpeechSynthesis();
-      if (!synth || !text.trim()) {
-        return;
-      }
-
-      const current = readHostVoiceSettings();
-      if (!options?.force && !current.narrationEnabled) {
-        return;
-      }
-
-      synth.cancel();
-
-      const utterance = new SpeechSynthesisUtterance(text);
-      utteranceRef.current = utterance;
-      utterance.rate = current.rate;
-      utterance.pitch = current.pitch;
-      utterance.volume = current.volume;
-
-      const voiceList = synth.getVoices();
-      const match = current.voiceName
-        ? voiceList.find((voice) => voice.name === current.voiceName)
-        : undefined;
-      if (match) {
-        utterance.voice = match;
-      }
-
-      utterance.onstart = () => setIsSpeaking(true);
-      utterance.onend = () => {
-        setIsSpeaking(false);
-        utteranceRef.current = null;
-      };
-      utterance.onerror = () => {
-        setIsSpeaking(false);
-        utteranceRef.current = null;
-      };
-
-      synth.speak(utterance);
+      speakNarrationText(text, { ...options, onSpeakingChange });
     },
-    [],
+    [onSpeakingChange],
   );
 
   const speakCalledItem = useCallback(
     (item: CalledItem, options?: { force?: boolean }) => {
-      speak(formatCalledItemForSpeech(item), options);
+      speakBingoItem(item.word, item.description, {
+        ...options,
+        onSpeakingChange,
+      });
     },
-    [speak],
+    [onSpeakingChange],
   );
 
   const setVoiceName = useCallback((name: string) => {

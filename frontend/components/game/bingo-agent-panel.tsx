@@ -3,7 +3,12 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { CalledItemsList } from "@/components/game/called-items-list";
 import { useSpeechSynthesis } from "@/hooks/useSpeechSynthesis";
+import { getAiCallerLabel } from "@/lib/narrate-called-item";
+import { speakCalledItem } from "@/lib/speak-item";
+import { prewarmSpeechSynthesisForUserGesture } from "@/lib/speak-bingo-item";
+import { NARRATION_UNAVAILABLE_MESSAGE } from "@/lib/speak-bingo-item";
 import type { CalledItem } from "@/types/gameplay";
+import type { HostVoiceProfilePublic } from "@/types/host-voice";
 
 type BingoAgentPanelProps = Readonly<{
   items: CalledItem[];
@@ -21,6 +26,10 @@ type BingoAgentPanelProps = Readonly<{
   previewSize?: number;
   /** Optional note rendered under the Call Next button (e.g. "Game completed"). */
   bottomNote?: ReactNode;
+  /** Host voice profile for narration mode and demo label (host gameplay only). */
+  hostVoiceProfile?: HostVoiceProfilePublic | null;
+  gameId?: string;
+  hostPin?: string;
 }>;
 
 export function BingoAgentPanel({
@@ -34,6 +43,9 @@ export function BingoAgentPanel({
   callNextDisabled = false,
   previewSize = 5,
   bottomNote,
+  hostVoiceProfile = null,
+  gameId = "",
+  hostPin = "",
 }: BingoAgentPanelProps) {
   const speech = useSpeechSynthesis();
   const currentItem = items.at(-1) ?? null;
@@ -57,11 +69,19 @@ export function BingoAgentPanel({
     });
   }, [historyQuery, previousItems]);
 
+  const aiCallerLabel =
+    Boolean(currentItem) ? getAiCallerLabel(hostVoiceProfile) : null;
+
   function handleReplay() {
     if (!currentItem) {
       return;
     }
+    prewarmSpeechSynthesisForUserGesture();
     speech.cancel();
+    if (gameId.trim()) {
+      void speakCalledItem(currentItem, gameId.trim(), hostPin.trim());
+      return;
+    }
     speech.speakCalledItem(currentItem, { force: true });
   }
 
@@ -103,8 +123,7 @@ export function BingoAgentPanel({
 
         {!speech.supported ? (
           <p className="rounded-2xl border border-amber-300/30 bg-amber-500/10 p-4 text-sm font-semibold text-amber-100">
-            Speech synthesis is not available in this browser. You can still see
-            calls on screen.
+            {NARRATION_UNAVAILABLE_MESSAGE} You can still see calls on screen.
           </p>
         ) : null}
 
@@ -150,6 +169,12 @@ export function BingoAgentPanel({
         </span>
       </div>
 
+      {!speech.supported ? (
+        <p className="rounded-2xl border border-amber-300/30 bg-amber-500/10 p-3 text-xs font-semibold text-amber-100">
+          {NARRATION_UNAVAILABLE_MESSAGE}
+        </p>
+      ) : null}
+
       <div className="rounded-2xl border border-yellow-200/25 bg-yellow-300 p-4 text-slate-950 shadow-lg shadow-yellow-500/20">
         <p className="text-[11px] font-black uppercase tracking-[0.24em]">
           Now Calling
@@ -164,6 +189,11 @@ export function BingoAgentPanel({
         {currentItem ? (
           <p className="mt-2 text-[11px] font-bold uppercase tracking-[0.2em] text-slate-700">
             Call #{currentItem.called_order}
+          </p>
+        ) : null}
+        {aiCallerLabel ? (
+          <p className="mt-2 text-xs font-semibold text-slate-800">
+            {aiCallerLabel}
           </p>
         ) : null}
       </div>

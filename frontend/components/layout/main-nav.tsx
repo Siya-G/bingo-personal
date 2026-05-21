@@ -6,7 +6,6 @@ const navItems = [
   { href: "/join", label: "Join" },
   { href: "/game", label: "Game" },
   { href: "/leaderboard", label: "Leaderboard" },
-  { href: "/#demo-workflow", label: "Demo" },
 ];
 
 export function MainNav() {

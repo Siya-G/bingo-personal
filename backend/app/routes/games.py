@@ -1,7 +1,7 @@
+import json
+import logging
 import secrets
 import string
-
-import json
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
@@ -36,6 +36,7 @@ from app.services.card_generator import generate_cards_for_game, get_player_card
 from app.services.game_invites import process_game_invites
 from app.services.gameplay import call_next_item, get_called_items, start_game
 from app.services.llm_items import resolve_generated_items_for_game
+from app.services.topic_cache import get_cached_items, save_cached_items
 from app.services.player_join import join_game
 from app.services.audit_log import (
     audit_event_to_response,
@@ -64,6 +65,7 @@ from app.services.websocket_manager import (
 )
 
 router = APIRouter(prefix="/games", tags=["games"])
+logger = logging.getLogger(__name__)
 
 GAME_CODE_LENGTH = 6
 
@@ -74,6 +76,7 @@ def _generate_items_response(
     target_count: int,
     minimum_count: int,
     warning: str | None,
+    cached: bool = False,
 ) -> GenerateItemsResponse:
     return GenerateItemsResponse(
         items=[BingoItemResponse.model_validate(row) for row in bingo_items],
@@ -81,6 +84,7 @@ def _generate_items_response(
         actual_count=len(bingo_items),
         minimum_count=minimum_count,
         warning=warning,
+        cached=cached,
     )
 
 
@@ -104,8 +108,17 @@ def generate_game_code(db: Session) -> str:
             return code
 
 
+# Critical path: Create Game. If imports or schema changes break this endpoint,
+# the entire host flow breaks. Run test_create_game_success after any model/schema change.
 @router.post("", response_model=GameResponse, status_code=status.HTTP_201_CREATED)
 def create_game(game_data: GameCreate, db: Session = Depends(get_db)) -> Game:
+    logger.info(
+        "POST /games received: title=%r topic=%r number_of_players=%s patterns=%s",
+        game_data.title,
+        game_data.topic,
+        game_data.number_of_players,
+        game_data.resolved_winning_patterns(),
+    )
     pin_salt, pin_hash = hash_secret(game_data.host_pin)
     patterns = game_data.resolved_winning_patterns()
     game = Game(
@@ -321,35 +334,54 @@ def generate_items(
         )
 
     topic = game.topic or game.title
-    try:
-        outcome = resolve_generated_items_for_game(
-            topic=topic,
-            count=pool_target,
-            settings=settings,
-        )
-    except ItemGenerationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
-        ) from exc
 
-    n = len(outcome.items)
-    if n < settings.bingo_card_cell_count:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(
-                f"Only {n} valid unique items were produced; each Bingo card needs "
-                f"{settings.bingo_card_cell_count} distinct cells. Try a broader topic."
-            ),
+    # ── Topic cache check ────────────────────────────────────────────────────
+    cached_generated = get_cached_items(db, topic)
+    from_cache = cached_generated is not None
+
+    if from_cache:
+        generated_items = cached_generated
+        generation_warning: str | None = None
+        logger.info(
+            "Topic cache HIT for game_id=%s topic=%r", game.id, topic
         )
-    if n < min_count:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(
-                f"Only {n} valid unique items were produced; the minimum pool for this "
-                f"game is {min_count}. Try a broader topic or adjust BINGO_MIN_ITEM_POOL_SIZE."
-            ),
-        )
+    else:
+        # Cache miss — call the AI (or mock) as normal.
+        try:
+            outcome = resolve_generated_items_for_game(
+                topic=topic,
+                count=pool_target,
+                settings=settings,
+            )
+        except ItemGenerationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(exc),
+            ) from exc
+
+        generated_items = outcome.items
+        generation_warning = outcome.warning
+
+        n = len(generated_items)
+        if n < settings.bingo_card_cell_count:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    f"Only {n} valid unique items were produced; each Bingo card needs "
+                    f"{settings.bingo_card_cell_count} distinct cells. Try a broader topic."
+                ),
+            )
+        if n < min_count:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    f"Only {n} valid unique items were produced; the minimum pool for this "
+                    f"game is {min_count}. Try a broader topic or adjust BINGO_MIN_ITEM_POOL_SIZE."
+                ),
+            )
+
+        # Persist to cache so the next game with the same topic skips the AI.
+        save_cached_items(db, topic, generated_items)
 
     bingo_items = [
         BingoItem(
@@ -359,7 +391,7 @@ def generate_items(
             is_called=False,
             called_order=None,
         )
-        for item in outcome.items
+        for item in generated_items
     ]
 
     db.add_all(bingo_items)
@@ -368,9 +400,9 @@ def generate_items(
     for item in bingo_items:
         db.refresh(item)
 
-    audit_meta = {"item_count": len(bingo_items)}
-    if outcome.warning:
-        audit_meta["warning"] = outcome.warning
+    audit_meta: dict = {"item_count": len(bingo_items), "cached": from_cache}
+    if generation_warning:
+        audit_meta["warning"] = generation_warning
 
     create_audit_event(
         db,
@@ -384,7 +416,8 @@ def generate_items(
         bingo_items,
         target_count=pool_target,
         minimum_count=min_count,
-        warning=outcome.warning,
+        warning=generation_warning,
+        cached=from_cache,
     )
 
 

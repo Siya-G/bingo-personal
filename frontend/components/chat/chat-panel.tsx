@@ -33,6 +33,10 @@ type ChatPanelProps = Readonly<{
   hostPin?: string | null;
   playerSession?: string | null;
   className?: string;
+  /** Floating popup: hide panel header and fit message list to available height. */
+  embedded?: boolean;
+  /** Slide-in side panel: full height, input pinned to bottom. */
+  slideIn?: boolean;
   /** Override the auto-derived "Live updates" caption (e.g. for tests). */
   socketStatusOverride?: string | null;
 }>;
@@ -95,8 +99,12 @@ export function ChatPanel(props: ChatPanelProps) {
     hostPin,
     playerSession,
     className,
+    embedded = false,
+    slideIn = false,
     socketStatusOverride,
   } = props;
+
+  const compactLayout = embedded || slideIn;
 
   const trimmedGameIdStr = useMemo(() => {
     if (gameId === null || gameId === undefined) {
@@ -278,7 +286,12 @@ export function ChatPanel(props: ChatPanelProps) {
   return (
     <section
       className={[
-        "flex flex-col rounded-3xl border border-white/10 bg-slate-950/40 p-4 text-slate-100",
+        "flex flex-col text-slate-100",
+        slideIn
+          ? "h-full min-h-0 flex-1"
+          : embedded
+            ? "min-h-0 flex-1 rounded-2xl border border-white/10 bg-slate-950/60 p-3"
+            : "rounded-3xl border border-white/10 bg-slate-950/40 p-4",
         className ?? "",
       ]
         .filter(Boolean)
@@ -286,28 +299,41 @@ export function ChatPanel(props: ChatPanelProps) {
       data-testid="chat-panel"
       aria-label="Game room chat"
     >
-      <header className="mb-3 flex items-center justify-between gap-3">
-        <div>
-          <h3 className="text-base font-black text-white">Room chat</h3>
-          {liveCaption ? (
-            <p className="mt-1 text-xs font-semibold text-cyan-200/85">
-              {liveCaption}
-            </p>
-          ) : null}
-        </div>
-        <span className="text-xs font-semibold text-slate-400">
-          {messages.length} {messages.length === 1 ? "message" : "messages"}
-        </span>
-      </header>
+      {!compactLayout ? (
+        <header className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-base font-black text-white">Room chat</h3>
+            {liveCaption ? (
+              <p className="mt-1 text-xs font-semibold text-cyan-200/85">
+                {liveCaption}
+              </p>
+            ) : null}
+          </div>
+          <span className="text-xs font-semibold text-slate-400">
+            {messages.length} {messages.length === 1 ? "message" : "messages"}
+          </span>
+        </header>
+      ) : liveCaption ? (
+        <p className="mb-2 shrink-0 text-[11px] font-semibold text-cyan-200/85">
+          {liveCaption}
+        </p>
+      ) : null}
 
       <div
         ref={scrollRef}
-        className="mb-3 flex max-h-72 min-h-32 flex-col gap-2 overflow-y-auto rounded-2xl bg-slate-900/60 p-3"
+        className={[
+          "flex flex-col gap-2 overflow-y-auto rounded-2xl bg-slate-900/60 p-3",
+          slideIn ? "mb-0 min-h-0 flex-1" : "mb-3 min-h-32",
+          compactLayout && !slideIn ? "min-h-0 flex-1 max-h-none" : "",
+          !compactLayout ? "max-h-72" : "",
+        ].join(" ")}
         data-testid="chat-messages"
       >
         {numericGameId === null ? (
           <p className="text-sm font-semibold text-slate-400">
-            Enter a game ID to see chat for that room.
+            {slideIn
+              ? "No active game — set up or join a room first."
+              : "Enter a game ID to see chat for that room."}
           </p>
         ) : isLoading && messages.length === 0 ? (
           <p className="text-sm font-semibold text-slate-400">
@@ -326,7 +352,10 @@ export function ChatPanel(props: ChatPanelProps) {
 
       {historyError ? (
         <p
-          className="mb-3 rounded-2xl border border-red-300/30 bg-red-500/10 px-3 py-2 text-xs font-semibold text-red-100"
+          className={[
+            "rounded-2xl border border-red-300/30 bg-red-500/10 px-3 py-2 text-xs font-semibold text-red-100",
+            slideIn ? "mb-2 shrink-0" : "mb-3",
+          ].join(" ")}
           role="alert"
         >
           {historyError}
@@ -334,7 +363,12 @@ export function ChatPanel(props: ChatPanelProps) {
       ) : null}
 
       <form
-        className="flex flex-wrap items-center gap-2"
+        className={[
+          "flex flex-wrap items-center gap-2",
+          slideIn
+            ? "shrink-0 border-t border-white/10 pt-3"
+            : "",
+        ].join(" ")}
         noValidate
         onSubmit={(event) => {
           void handleSubmit(event);
@@ -360,35 +394,42 @@ export function ChatPanel(props: ChatPanelProps) {
           autoComplete="off"
         />
         <button
-          className="rounded-full bg-yellow-300 px-4 py-2 text-xs font-black uppercase tracking-[0.18em] text-slate-950 shadow-lg shadow-yellow-500/30 transition hover:bg-yellow-200 disabled:cursor-not-allowed disabled:opacity-60"
+          className="rounded-full bg-yellow-300 px-5 py-2.5 text-xs font-black uppercase tracking-[0.2em] text-slate-950 shadow-lg shadow-yellow-500/30 transition hover:bg-yellow-200 disabled:cursor-not-allowed disabled:opacity-60"
           disabled={!canSend}
           type="submit"
         >
-          {isSending ? "Sending…" : "Send"}
+          {isSending ? "Sending…" : slideIn ? "SEND" : "Send"}
         </button>
-        <span
-          aria-live="polite"
-          className={[
-            "text-[10px] font-semibold uppercase tracking-[0.14em]",
-            remaining < 0 ? "text-red-300" : "text-slate-500",
-          ].join(" ")}
-        >
-          {remaining}/{CHAT_MESSAGE_MAX_LENGTH}
-        </span>
+        {!slideIn ? (
+          <span
+            aria-live="polite"
+            className={[
+              "text-[10px] font-semibold uppercase tracking-[0.14em]",
+              remaining < 0 ? "text-red-300" : "text-slate-500",
+            ].join(" ")}
+          >
+            {remaining}/{CHAT_MESSAGE_MAX_LENGTH}
+          </span>
+        ) : null}
       </form>
 
       {sendError ? (
         <p
-          className="mt-2 rounded-2xl border border-red-300/30 bg-red-500/10 px-3 py-2 text-xs font-semibold text-red-100"
+          className={[
+            "rounded-2xl border border-red-300/30 bg-red-500/10 px-3 py-2 text-xs font-semibold text-red-100",
+            slideIn ? "mt-2 shrink-0" : "mt-2",
+          ].join(" ")}
           role="alert"
         >
           {sendError}
         </p>
       ) : null}
 
-      <p className="mt-2 text-[10px] font-semibold text-slate-500">
-        Please keep chat respectful and workplace-appropriate.
-      </p>
+      {!slideIn ? (
+        <p className="mt-2 text-[10px] font-semibold text-slate-500">
+          Please keep chat respectful and workplace-appropriate.
+        </p>
+      ) : null}
     </section>
   );
 }

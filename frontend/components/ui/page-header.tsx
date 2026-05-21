@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 type PageHeaderProps = Readonly<{
   eyebrow: string;
   title: string;
-  description: string;
+  description?: string;
   actions?: ReactNode;
 }>;
 
@@ -22,9 +22,11 @@ export function PageHeader({
         <h1 className="mt-4 text-4xl font-black tracking-tight text-white sm:text-5xl lg:text-6xl">
           {title}
         </h1>
-        <p className="mt-5 text-base leading-7 text-slate-300 sm:text-lg">
-          {description}
-        </p>
+        {description ? (
+          <p className="mt-5 text-base leading-7 text-slate-300 sm:text-lg">
+            {description}
+          </p>
+        ) : null}
       </div>
       {actions ? <div className="flex flex-wrap gap-3">{actions}</div> : null}
     </section>

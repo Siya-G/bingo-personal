@@ -1,46 +1,62 @@
 "use client";
 
-import { useEffect, useState, startTransition } from "react";
+import { useCallback, useEffect, useState, startTransition } from "react";
 
 import { ChatPanel } from "@/components/chat/chat-panel";
-import { readPlayerGameSession } from "@/lib/player-session";
+import {
+  PLAYER_GAME_SESSION_KEY,
+  readPlayerGameSession,
+} from "@/lib/player-session";
 import type { PlayerGameSession } from "@/types/player";
 
-/**
- * Player-side wrapper: reads the active session from sessionStorage so the
- * chat panel can use the player's identity + token without re-prompting.
- *
- * The card stays visible (with an informative message) even before a session
- * exists, so a fresh visitor sees what to do.
- */
-export function PlayerChatCard() {
+type PlayerChatCardProps = Readonly<{
+  slideIn?: boolean;
+  embedded?: boolean;
+}>;
+
+export function PlayerChatCard({ slideIn = false, embedded = false }: PlayerChatCardProps) {
   const [session, setSession] = useState<PlayerGameSession | null>(null);
 
-  useEffect(() => {
-    // ``readPlayerGameSession`` touches sessionStorage, which is only available
-    // in the browser; ``queueMicrotask`` defers past hydration so SSR is happy.
-    queueMicrotask(() => {
-      const stored = readPlayerGameSession();
-      startTransition(() => setSession(stored));
-    });
+  const refreshSession = useCallback(() => {
+    const stored = readPlayerGameSession();
+    startTransition(() => setSession(stored));
   }, []);
+
+  useEffect(() => {
+    queueMicrotask(refreshSession);
+  }, [refreshSession]);
+
+  useEffect(() => {
+    if (!slideIn || typeof window === "undefined") {
+      return;
+    }
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === PLAYER_GAME_SESSION_KEY) {
+        refreshSession();
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [refreshSession, slideIn]);
 
   if (!session) {
     return (
-      <div className="rounded-3xl border border-white/10 bg-slate-950/40 p-6 text-center text-sm font-semibold text-slate-300">
-        Join a room first to use chat. Your player session unlocks the chat
-        controls for that game.
+      <div className="flex h-full items-center justify-center p-4 text-center text-sm font-semibold text-slate-400">
+        Join a room first to use chat. Your player session unlocks chat for this
+        game.
       </div>
     );
   }
 
   return (
     <ChatPanel
+      embedded={embedded}
       gameId={session.game_id}
-      role="PLAYER"
-      senderName={session.player_name}
-      senderId={session.player_id}
       playerSession={session.session_token}
+      role="PLAYER"
+      senderId={session.player_id}
+      senderName={session.player_name}
+      slideIn={slideIn}
     />
   );
 }

@@ -47,12 +47,20 @@ class Settings(BaseSettings):
     # OpenAI (server-side only — never expose to the browser).
     openai_api_key: str = ""
     openai_model: str = "gpt-4.1-mini"
+    openai_tts_model: str = "tts-1"
+    openai_tts_voice: str = "nova"
     use_mock_llm: bool = False
     # Bingo: shared pool target (e.g. 75), minimum acceptable unique items (e.g. 40),
     # and 5×5 card cell count (25). Cards sample ``bingo_card_cell_count`` items from the pool.
     bingo_card_cell_count: int = Field(default=25, ge=25, le=25)
     bingo_item_pool_size: int = Field(default=75, ge=25, le=200)
     bingo_min_item_pool_size: int = Field(default=40, ge=25, le=200)
+    # Opt-in host voice / Bingo Agent narration provider routing.
+    voice_provider: str = Field(default="demo")
+    voice_profile_ttl_hours: int = Field(default=24, ge=1, le=24 * 30)
+    elevenlabs_api_key: str = ""
+    # Admin secret for cache-management endpoints. Leave empty to disable.
+    admin_secret: str = ""
 
     model_config = SettingsConfigDict(
         env_file=BACKEND_ENV_FILE,

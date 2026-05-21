@@ -49,6 +49,29 @@ def _create_game(client: TestClient, **kwargs) -> dict:
     return response.json()
 
 
+def test_create_game_success(client: TestClient) -> None:
+    """POST /games with the host UI payload must return 201 and a room code."""
+    response = client.post(
+        "/games",
+        json={
+            "title": "Friday Night Bingo",
+            "topic": "Famous mountains",
+            "number_of_players": 12,
+            "winning_patterns": ["HORIZONTAL_ROW"],
+            "winning_pattern": "HORIZONTAL_ROW",
+            "host_pin": DEFAULT_HOST_PIN,
+        },
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["status"] == "WAITING"
+    assert isinstance(body.get("game_code"), str)
+    assert len(body["game_code"]) == 6
+    assert body["title"] == "Friday Night Bingo"
+    assert body["topic"] == "Famous mountains"
+    assert body["number_of_players"] == 12
+
+
 def _generate_items(client: TestClient, game_id: int) -> dict:
     response = client.post(
         f"/games/{game_id}/generate-items",

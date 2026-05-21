@@ -27,3 +27,11 @@ export type PlayerGameSession = {
   game_title: string;
   session_token: string;
 };
+
+/** Player row from GET /games/{game_id}/players (host room roster). */
+export type GameRoomPlayer = {
+  id: number;
+  game_id: number;
+  name: string;
+  created_at: string;
+};

@@ -1,6 +1,4 @@
 import { JoinGameFormClient } from "@/components/player/join-game-form-client";
-import { DemoCallout } from "@/components/demo/demo-callout";
-import { ButtonLink } from "@/components/ui/button-link";
 import { PageHeader } from "@/components/ui/page-header";
 import { Panel } from "@/components/ui/panel";
 
@@ -12,29 +10,13 @@ export default function PlayerJoinPage() {
           eyebrow="Player join"
           title="Step into the spotlight."
           description="Enter your display name and the host’s six-character game code. When items are ready on the server, you receive a Bingo card and a secure session token for this browser."
-          actions={
-            <>
-              <ButtonLink href="/game">Open game board</ButtonLink>
-              <ButtonLink href="/host" variant="secondary">
-                Host dashboard
-              </ButtonLink>
-            </>
-          }
         />
 
-        <DemoCallout>
-          <p>
-            After joining you will be redirected to the **Game** page. Use a unique
-            name per player in the same room — duplicates are rejected with a clear
-            message.
-          </p>
-        </DemoCallout>
-
         <Panel className="hidden lg:block">
-          <h2 className="text-lg font-black text-white">Empty state</h2>
+          <h2 className="text-lg font-black text-white">Need a code?</h2>
           <p className="mt-2 text-sm text-slate-400">
-            No lobby list here by design: every join is by **code**. If you do not have
-            a code yet, ask the host or run the optional seed script in the README.
+            Every join is by **game code**. Ask your host for the six-character code
+            shown when they create the room.
           </p>
         </Panel>
       </div>

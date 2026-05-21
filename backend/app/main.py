@@ -10,7 +10,16 @@ from fastapi.responses import JSONResponse
 
 from app.config import BACKEND_ENV_FILE, settings
 from app.database.connection import create_database_tables
-from app.routes import chat_router, games_router, health_router, websocket_router
+from app.routes import (
+    admin_router,
+    chat_router,
+    games_router,
+    health_router,
+    prize_router,
+    voice_audio_router,
+    voice_router,
+    websocket_router,
+)
 from app.services.smtp_mailer import log_smtp_startup_status
 from app.services.websocket_manager import set_broadcast_loop
 
@@ -85,6 +94,10 @@ def create_app() -> FastAPI:
 
     app.include_router(health_router)
     app.include_router(games_router)
+    app.include_router(admin_router)
+    app.include_router(prize_router)
+    app.include_router(voice_router)
+    app.include_router(voice_audio_router)
     app.include_router(chat_router)
     app.include_router(websocket_router)
 

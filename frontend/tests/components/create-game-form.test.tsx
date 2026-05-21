@@ -84,15 +84,12 @@ describe("CreateGameForm", () => {
     expect(body.winning_pattern).toBe("HORIZONTAL_ROW");
   });
 
-  it("renders the Create Game button as type='button' so a click cannot trigger a default form submit", () => {
+  it("uses type=button so a click cannot trigger a native form reload", () => {
     render(<CreateGameForm />);
-    // Regression guard for the Next.js 16 / Turbopack page-reload bug: if the
-    // button is ``type="submit"`` AND React hasn't hydrated yet, a click does
-    // a default GET to the current URL and visually clears the form. Keeping
-    // ``type="button"`` means submission only happens through the React
-    // onClick → createGame path, regardless of hydration timing.
     const button = screen.getByRole("button", { name: /create game/i });
     expect(button).toHaveAttribute("type", "button");
+    expect(button).not.toBeDisabled();
+    expect(screen.queryByText(/loading form/i)).toBeNull();
   });
 
   it("preserves form field values and shows an error when the API fails", async () => {
@@ -121,8 +118,6 @@ describe("CreateGameForm", () => {
         json: async () => ({ detail: "title: This field cannot be empty." }),
       } as Response);
     });
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-
     const user = userEvent.setup();
     render(<CreateGameForm />);
 
@@ -143,8 +138,24 @@ describe("CreateGameForm", () => {
       screen.getByPlaceholderText(/At least 4 characters/i),
     ).toHaveValue("my-host-pin");
     expect(screen.queryByText(/Game created/i)).toBeNull();
-    expect(consoleError).toHaveBeenCalled();
+  });
 
-    consoleError.mockRestore();
+  it("shows a visible validation error without calling the API when title is empty", async () => {
+    const user = userEvent.setup();
+    render(<CreateGameForm />);
+
+    await user.type(screen.getByPlaceholderText(/At least 4 characters/i), "my-host-pin");
+    await user.click(screen.getByRole("button", { name: /create game/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /Game title is required/i,
+    );
+
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    const createGameCall = fetchMock.mock.calls.find((call) => {
+      const url = typeof call[0] === "string" ? call[0] : call[0].toString();
+      return url.endsWith("/games") && (call[1] as RequestInit | undefined)?.method === "POST";
+    });
+    expect(createGameCall).toBeUndefined();
   });
 });

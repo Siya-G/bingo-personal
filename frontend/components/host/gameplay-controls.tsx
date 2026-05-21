@@ -1,10 +1,18 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState, startTransition } from "react";
+import {
+  FormEvent,
+  useCallback,
+  useEffect,
+  useState,
+  startTransition,
+} from "react";
 import { BingoAgentPanel } from "@/components/game/bingo-agent-panel";
+import {
+  HostBingoWinBanner,
+  type HostBingoWinNotice,
+} from "@/components/host/host-bingo-win-banner";
 import { HostAuditTrail } from "@/components/host/host-audit-trail";
-import { HostLeaderboardPreview } from "@/components/host/host-leaderboard-preview";
-import { HostPrizeNotifications } from "@/components/host/host-prize-notifications";
 import { ErrorMessage } from "@/components/ui/error-message";
 import { LoadingState } from "@/components/ui/loading-state";
 import {
@@ -14,6 +22,7 @@ import {
   getAuditEvents,
   getCalledItems,
   getLeaderboard,
+  listGamePlayers,
   getPrizeNotifications,
   markPrizeNotificationDisplayed,
   startGame,
@@ -21,14 +30,22 @@ import {
   type GenerateGameItemsResult,
 } from "@/lib/api/games";
 import { readHostPinForGame, saveHostPinForGame } from "@/lib/host-credentials";
+import { saveLiveGameId } from "@/lib/live-game-session";
+import { getAiCallerLabel } from "@/lib/narrate-called-item";
 import { mergeCalledItems } from "@/lib/merge-called-items";
 import { useGameSocket } from "@/hooks/useGameSocket";
+import { useHostVoiceProfile } from "@/hooks/useHostVoiceProfile";
 import { useSpeechSynthesis } from "@/hooks/useSpeechSynthesis";
+import { speakCalledItem } from "@/lib/speak-item";
+import { prewarmSpeechSynthesisForUserGesture } from "@/lib/speak-bingo-item";
 import type { AuditEvent } from "@/types/audit";
 import type { Game } from "@/types/game";
 import type { CalledItem } from "@/types/gameplay";
 import type { GameLeaderboard } from "@/types/leaderboard";
 import type { PrizeNotification } from "@/types/prize";
+
+const WAITING_FOR_PLAYERS_MESSAGE =
+  "Waiting for players to join before calling items.";
 
 function formatSocketStatus(status: string) {
   switch (status) {
@@ -57,6 +74,9 @@ export function GameplayControls() {
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditError, setAuditError] = useState<string | null>(null);
+  const [playersInRoom, setPlayersInRoom] = useState<number>(0);
+  const [hostBingoWinNotice, setHostBingoWinNotice] =
+    useState<HostBingoWinNotice | null>(null);
   const [prizeNotifications, setPrizeNotifications] = useState<PrizeNotification[]>(
     [],
   );
@@ -72,11 +92,19 @@ export function GameplayControls() {
     [],
   );
   const [itemPoolMeta, setItemPoolMeta] = useState<
-    Pick<GenerateGameItemsResult, "target_count" | "actual_count" | "minimum_count" | "warning">
+    Pick<GenerateGameItemsResult, "target_count" | "actual_count" | "minimum_count" | "warning" | "cached">
     | null
   >(null);
 
   const { status: wsStatus, lastEvent } = useGameSocket(gameId);
+  const {
+    profile: hostVoiceProfile,
+    refreshProfile: refreshHostVoiceProfile,
+    isLoadingVoiceProfile,
+    voiceWarning,
+    selectedVoiceMode,
+  } = useHostVoiceProfile(gameId, hostPin);
+  const [narrationWarning, setNarrationWarning] = useState<string | null>(null);
 
   const visibleGeneratedRows = generatedItemRows.filter(
     (row) => String(row.game_id) === gameId.trim(),
@@ -84,6 +112,7 @@ export function GameplayControls() {
 
   useEffect(() => {
     const trimmed = gameId.trim();
+    saveLiveGameId(trimmed);
     startTransition(() => {
       setHostPin(trimmed ? readHostPinForGame(trimmed) ?? "" : "");
     });
@@ -115,6 +144,21 @@ export function GameplayControls() {
       );
     } finally {
       setLeaderboardLoading(false);
+    }
+  }, []);
+
+  const refreshPlayersInRoom = useCallback(async (nextGameId: string) => {
+    const trimmed = nextGameId.trim();
+    if (!trimmed) {
+      setPlayersInRoom(0);
+      return;
+    }
+
+    try {
+      const rows = await listGamePlayers(trimmed);
+      setPlayersInRoom(rows.length);
+    } catch {
+      setPlayersInRoom(0);
     }
   }, []);
 
@@ -177,6 +221,7 @@ export function GameplayControls() {
         setAuditError(null);
         setPrizeNotifications([]);
         setPrizeError(null);
+        setPlayersInRoom(0);
       });
       return;
     }
@@ -184,11 +229,19 @@ export function GameplayControls() {
     const pin = hostPin.trim() || null;
     const kickoff = setTimeout(() => {
       void refreshLeaderboard(gameId);
+      void refreshPlayersInRoom(gameId);
       void refreshAudit(gameId, pin);
       void refreshPrizes(gameId);
     }, 0);
     return () => clearTimeout(kickoff);
-  }, [gameId, hostPin, refreshLeaderboard, refreshAudit, refreshPrizes]);
+  }, [
+    gameId,
+    hostPin,
+    refreshLeaderboard,
+    refreshPlayersInRoom,
+    refreshAudit,
+    refreshPrizes,
+  ]);
 
   // WebSocket pushes: new calls, podium changes, game finished.
   useEffect(() => {
@@ -201,6 +254,16 @@ export function GameplayControls() {
         case "NEW_CALLED_ITEM": {
           const item = lastEvent.payload;
           setCalledItems((prev) => mergeCalledItems(prev, item));
+          break;
+        }
+        case "BINGO_CLAIMED": {
+          const claim = lastEvent.payload;
+          if (claim.success && claim.rank != null) {
+            setHostBingoWinNotice({
+              playerName: claim.player_name ?? "Player",
+              rank: claim.rank,
+            });
+          }
           break;
         }
         case "LEADERBOARD_UPDATED": {
@@ -239,6 +302,15 @@ export function GameplayControls() {
             return [row, ...prev];
           });
           setAuditError(null);
+          if (payload.event_type === "PLAYER_JOINED") {
+            void refreshPlayersInRoom(gameId);
+          }
+          break;
+        }
+        case "CHAT_MESSAGE": {
+          if (lastEvent.payload.message.includes("joined the room")) {
+            void refreshPlayersInRoom(gameId);
+          }
           break;
         }
         case "PRIZE_NOTIFICATION_CREATED": {
@@ -267,7 +339,7 @@ export function GameplayControls() {
           break;
       }
     });
-  }, [lastEvent]);
+  }, [gameId, lastEvent, refreshPlayersInRoom]);
 
   async function refreshCalledItems(nextGameId = gameId) {
     if (!nextGameId.trim()) {
@@ -281,6 +353,7 @@ export function GameplayControls() {
       const items = await getCalledItems(nextGameId);
       setCalledItems(items);
       await refreshLeaderboard(nextGameId);
+      await refreshPlayersInRoom(nextGameId);
       await refreshAudit(nextGameId, hostPin.trim() || null);
       await refreshPrizes(nextGameId);
     } catch (caughtError) {
@@ -310,6 +383,9 @@ export function GameplayControls() {
   }
 
   async function handleCallNext() {
+    // Pre-warm speech synthesis for Chrome gesture requirement
+    prewarmSpeechSynthesisForUserGesture();
+
     if (!gameId.trim()) {
       setError("Enter a game ID before calling the next item.");
       return;
@@ -319,8 +395,11 @@ export function GameplayControls() {
     setIsCalling(true);
     try {
       const item = await callNextItem(gameId, hostPin.trim() || null);
+      console.log("Call next item success");
       setCalledItems((currentItems) => mergeCalledItems(currentItems, item));
-      speech.speakCalledItem(item);
+      setNarrationWarning(null);
+      void speakCalledItem(item, gameId.trim(), hostPin.trim());
+      void refreshHostVoiceProfile();
     } catch (caughtError) {
       setError(readCaughtError(caughtError, "Unable to call next item."));
     } finally {
@@ -348,6 +427,7 @@ export function GameplayControls() {
         actual_count: result.actual_count,
         minimum_count: result.minimum_count,
         warning: result.warning,
+        cached: result.cached,
       });
       await refreshCalledItems(gid);
     } catch (caughtError) {
@@ -355,7 +435,7 @@ export function GameplayControls() {
       setItemPoolMeta(null);
       const detail = readCaughtError(caughtError, "").trim();
       setError(
-        `AI item generation failed. Check backend OPENAI_API_KEY or try mock mode.${
+        `AI item generation failed. Check your server configuration and try again.${
           detail ? ` ${detail}` : ""
         }`,
       );
@@ -420,15 +500,25 @@ export function GameplayControls() {
   const isActive = liveStatus === "ACTIVE";
   const isCompleted = liveStatus === "COMPLETED";
   const socketLine = gameId.trim() ? formatSocketStatus(wsStatus) : null;
+  const joinedPlayerCount = playersInRoom;
+  const waitingForPlayers = Boolean(gameId.trim()) && joinedPlayerCount === 0;
   const totalItemCount =
     visibleGeneratedRows.length > 0
       ? visibleGeneratedRows.length
       : itemPoolMeta?.actual_count;
-  const callNextDisabled = !isActive || !gameId.trim() || isCompleted;
+  const callNextDisabled =
+    !isActive || !gameId.trim() || isCompleted || waitingForPlayers;
   const callNextLabel = isCompleted ? "Game completed" : "Call Next Item";
 
   return (
-    <div className="rounded-3xl bg-slate-950/50 p-5 sm:p-6">
+    <>
+      {hostBingoWinNotice ? (
+        <HostBingoWinBanner
+          notice={hostBingoWinNotice}
+          onDismiss={() => setHostBingoWinNotice(null)}
+        />
+      ) : null}
+      <div className="rounded-3xl bg-slate-950/50 p-5 sm:p-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h2 className="text-2xl font-black text-white">Live Gameplay</h2>
@@ -571,18 +661,30 @@ export function GameplayControls() {
           ) : null}
 
           <div>
+            {gameId.trim() ? (
+              <p className="mb-2 text-xs font-semibold text-slate-400">
+                {joinedPlayerCount} player{joinedPlayerCount === 1 ? "" : "s"} in
+                the room
+              </p>
+            ) : null}
             <button
               className="w-full rounded-full bg-yellow-300 px-5 py-4 text-sm font-black uppercase tracking-[0.18em] text-slate-950 shadow-lg shadow-yellow-500/30 transition hover:bg-yellow-200 disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={isStarting || isCompleted}
+              disabled={isStarting || isCompleted || waitingForPlayers}
               onClick={() => void handleStartGame()}
               type="button"
             >
               {isStarting ? "Starting game…" : "Start Game"}
             </button>
-            <p className="mt-2 text-xs text-slate-500">
-              Use <strong className="text-slate-300">Call Next Item</strong> in the
-              Bingo Agent panel to draw words while the round is active.
-            </p>
+            {waitingForPlayers ? (
+              <p className="mt-2 text-xs text-slate-400">
+                {WAITING_FOR_PLAYERS_MESSAGE}
+              </p>
+            ) : (
+              <p className="mt-2 text-xs text-slate-500">
+                Use <strong className="text-slate-300">Call Next Item</strong> in the
+                Bingo Agent panel to draw words while the round is active.
+              </p>
+            )}
           </div>
 
           {isCompleted ? (
@@ -593,15 +695,29 @@ export function GameplayControls() {
 
           <ErrorMessage message={error} title="Something went wrong" />
 
-          <div className="border-t border-white/10 pt-6">
-            <HostLeaderboardPreview
-              error={leaderboardError}
-              gameId={gameId.trim()}
-              leaderboard={leaderboard}
-              loading={leaderboardLoading}
-              liveHint="Standings update live over the WebSocket when players claim Bingo."
-            />
-          </div>
+          {voiceWarning ? (
+            <p
+              className="rounded-xl border border-amber-400/35 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-50"
+              role="status"
+            >
+              {voiceWarning}
+            </p>
+          ) : null}
+
+          {isLoadingVoiceProfile ? (
+            <p className="text-xs text-slate-500" role="status">
+              Loading host voice profile…
+            </p>
+          ) : null}
+
+          {narrationWarning ? (
+            <p
+              className="rounded-xl border border-amber-400/35 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-50"
+              role="status"
+            >
+              {narrationWarning}
+            </p>
+          ) : null}
 
           <div className="border-t border-white/10 pt-6">
             <HostAuditTrail
@@ -610,34 +726,50 @@ export function GameplayControls() {
               loading={auditLoading}
             />
           </div>
-
-          <div className="border-t border-white/10 pt-6">
-            <HostPrizeNotifications
-              error={prizeError}
-              gameId={gameId.trim()}
-              loading={prizeLoading}
-              notifications={prizeNotifications}
-              onMarkDisplayed={handleMarkPrizeDisplayed}
-            />
-          </div>
         </div>
 
         <aside className="min-w-0 lg:sticky lg:top-4 lg:self-start">
+          {selectedVoiceMode !== "default-no-profile" ||
+          getAiCallerLabel(hostVoiceProfile) ? (
+            <p className="mb-3 text-xs text-slate-500" data-testid="voice-mode-hint">
+              {selectedVoiceMode !== "default-no-profile" ? (
+                <span>
+                  Voice mode: {selectedVoiceMode.replace(/-/g, " ")}
+                </span>
+              ) : null}
+              {getAiCallerLabel(hostVoiceProfile) ? (
+                <span
+                  className={
+                    selectedVoiceMode !== "default-no-profile"
+                      ? "mt-1 block font-semibold text-cyan-200/90"
+                      : "block font-semibold text-cyan-200/90"
+                  }
+                >
+                  {getAiCallerLabel(hostVoiceProfile)}
+                </span>
+              ) : null}
+            </p>
+          ) : null}
           {isActive || calledItems.length > 0 ? (
             <BingoAgentPanel
               items={calledItems}
               compact
               totalItemCount={totalItemCount}
+              hostVoiceProfile={hostVoiceProfile}
+              gameId={gameId.trim()}
+              hostPin={hostPin.trim()}
               onCallNext={() => void handleCallNext()}
               isCallingNext={isCalling}
               callNextDisabled={callNextDisabled}
               callNextLabel={callNextLabel}
               bottomNote={
-                !gameId.trim()
-                  ? "Enter a game ID to enable Call Next."
-                  : !isActive && !isCompleted
-                    ? "Press Start Game to begin calling items."
-                    : null
+                waitingForPlayers
+                  ? WAITING_FOR_PLAYERS_MESSAGE
+                  : !gameId.trim()
+                    ? "Enter a game ID to enable Call Next."
+                    : !isActive && !isCompleted
+                      ? "Press Start Game to begin calling items."
+                      : null
               }
             />
           ) : (
@@ -652,6 +784,7 @@ export function GameplayControls() {
         </aside>
       </div>
     </div>
+    </>
   );
 }
 

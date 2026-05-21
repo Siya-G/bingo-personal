@@ -91,6 +91,7 @@ class GenerateItemsResponse(BaseModel):
     actual_count: int
     minimum_count: int
     warning: str | None = None
+    cached: bool = False
 
 
 class CalledItemResponse(BaseModel):
@@ -249,6 +250,40 @@ class PrizeNotificationResponse(BaseModel):
     message: str
     status: str
     created_at: datetime
+
+
+_PRIZE_EMAIL_RE = re.compile(
+    r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$"
+)
+
+
+class PrizeSendRequest(BaseModel):
+    """Body for POST /games/{id}/prize/send."""
+
+    player_name: str = Field(..., min_length=1, max_length=120)
+    player_email: str = Field(..., min_length=5, max_length=254)
+    placement: int = Field(..., ge=1, le=100)
+
+    @field_validator("player_name")
+    @classmethod
+    def strip_prize_player_name(cls, v: str) -> str:
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("Player name cannot be empty.")
+        return stripped
+
+    @field_validator("player_email")
+    @classmethod
+    def validate_prize_email(cls, v: str) -> str:
+        stripped = v.strip()
+        if not _PRIZE_EMAIL_RE.match(stripped):
+            raise ValueError("Invalid email address format.")
+        return stripped
+
+
+class PrizeSendResponse(BaseModel):
+    success: bool
+    error: str | None = None
 
 
 class GameInviteRecipientResponse(BaseModel):
