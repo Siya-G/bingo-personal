@@ -1,0 +1,30 @@
+# Python
+.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Environment and secrets
+.env
+*.env
+
+# Database (persisted via Docker volume, not baked into image)
+bingo.db
+
+# Storage content (mounted as volume at runtime)
+storage/voice_samples/*
+storage/tts_cache/*
+
+# Tests and dev tooling
+tests/
+pytest.ini
+scripts/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp

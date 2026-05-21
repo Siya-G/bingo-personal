@@ -1,0 +1,29 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    ports:
+      - "8000:8000"
+    volumes:
+      # Persist SQLite database across container restarts
+      - bingo_db:/data
+      # Persist voice samples and TTS cache on the host
+      - ./backend/storage:/app/storage
+    env_file:
+      - path: ./backend/.env
+        required: false
+    environment:
+      # Override the default relative path so the DB lands on the named volume
+      - DATABASE_URL=sqlite:////data/bingo.db
+      - FRONTEND_BASE_URL=http://localhost:3000
+
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+volumes:
+  bingo_db:

@@ -1,0 +1,25 @@
+# Dependencies (installed inside the image)
+node_modules/
+
+# Next.js build output (rebuilt inside the image)
+.next/
+out/
+
+# Environment files (not needed — API URL is set via ENV in Dockerfile)
+.env
+.env.*
+!.env.example
+
+# Tests and dev tooling
+tests/
+vitest.config.ts
+vitest.setup.ts
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# TypeScript incremental build info
+tsconfig.tsbuildinfo
