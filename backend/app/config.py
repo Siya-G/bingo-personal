@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     smtp_use_tls: bool = True
     smtp_use_ssl: bool = False
     smtp_timeout_seconds: int = Field(default=20, ge=1, le=120)
+    # SendGrid Web API (preferred on Railway — SMTP port 587 is often blocked).
+    sendgrid_api_key: str = ""
     # OpenAI (server-side only — never expose to the browser).
     openai_api_key: str = ""
     openai_model: str = "gpt-4.1-mini"

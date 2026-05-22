@@ -11,6 +11,8 @@ from app.config import Settings
 from app.services.smtp_mailer import (
     SmtpSendError,
     describe_smtp,
+    is_email_configured,
+    is_sendgrid_configured,
     is_smtp_configured,
     send_email,
 )
@@ -41,6 +43,8 @@ def test_describe_smtp_never_returns_password() -> None:
     s = _live_settings()
     desc = describe_smtp(s)
     assert desc.configured is True
+    assert desc.email_configured is True
+    assert desc.sendgrid_configured is False
     assert desc.host == "smtp.example.com"
     assert desc.from_address == "noreply@example.com"
     assert desc.has_credentials is True
@@ -126,6 +130,79 @@ def test_send_email_uses_starttls_login_and_sends(
     assert msg["To"] == "dest@example.com"
     # Multipart alternative when html_body is supplied.
     assert msg.is_multipart()
+
+
+def test_send_email_uses_sendgrid_when_api_key_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _FakeSmtp()  # reset class-level SMTP capture from earlier tests
+    sendgrid_calls: list[dict[str, str]] = []
+
+    def fake_sendgrid(
+        _settings: Settings,
+        *,
+        from_addr: str,
+        to_addr: str,
+        subject: str,
+        text_body: str,
+        html_body: str | None,
+    ) -> None:
+        sendgrid_calls.append(
+            {
+                "from_addr": from_addr,
+                "to_addr": to_addr,
+                "subject": subject,
+                "text_body": text_body,
+                "html_body": html_body or "",
+            }
+        )
+
+    monkeypatch.setattr(
+        "app.services.smtp_mailer._send_via_sendgrid",
+        fake_sendgrid,
+    )
+    monkeypatch.setattr(smtplib, "SMTP", _FakeSmtp)
+
+    settings = _live_settings(sendgrid_api_key="SG.test-key")
+    send_email(
+        settings,
+        to_addr="winner@example.com",
+        subject="Hello",
+        text_body="Plain",
+        html_body="<p>Hi</p>",
+    )
+
+    assert len(sendgrid_calls) == 1
+    assert sendgrid_calls[0]["to_addr"] == "winner@example.com"
+    assert _FakeSmtp.captured_messages == []
+
+
+def test_send_email_falls_back_to_smtp_when_sendgrid_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def failing_sendgrid(*_args: object, **_kwargs: object) -> None:
+        raise SmtpSendError("SendGrid API returned status 403.")
+
+    monkeypatch.setattr(
+        "app.services.smtp_mailer._send_via_sendgrid",
+        failing_sendgrid,
+    )
+    monkeypatch.setattr(smtplib, "SMTP", _FakeSmtp)
+
+    settings = _live_settings(sendgrid_api_key="SG.test-key")
+    send_email(settings, to_addr="a@example.com", subject="Hi", text_body="Body")
+
+    assert len(_FakeSmtp.captured_messages) == 1
+
+
+def test_is_email_configured_with_sendgrid_only() -> None:
+    settings = Settings(
+        sendgrid_api_key="SG.test",
+        smtp_from="noreply@example.com",
+    )
+    assert is_sendgrid_configured(settings) is True
+    assert is_smtp_configured(settings) is False
+    assert is_email_configured(settings) is True
 
 
 def test_send_email_translates_auth_error(monkeypatch: pytest.MonkeyPatch) -> None:
