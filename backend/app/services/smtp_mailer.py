@@ -155,30 +155,51 @@ def _send_via_sendgrid(
     text_body: str,
     html_body: str | None,
 ) -> None:
+    sendgrid_key = settings.sendgrid_api_key.strip()
+    from_email = from_addr
+    to_email = to_addr
+
+    logger.error("SENDGRID: attempting to send to %s", to_email)
+    logger.error("SENDGRID: API key set: %s", bool(sendgrid_key))
+    logger.error("SENDGRID: from email: %s", from_email)
+
     try:
         from sendgrid import SendGridAPIClient
         from sendgrid.helpers.mail import Mail
     except ImportError as exc:
+        logger.error("SENDGRID: exception: %s", str(exc))
         raise SmtpSendError("SendGrid package is not installed.") from exc
 
-    message = Mail(
-        from_email=from_addr,
-        to_emails=to_addr,
-        subject=subject,
-        plain_text_content=text_body,
-        html_content=html_body,
-    )
-    client = SendGridAPIClient(settings.sendgrid_api_key.strip())
-    response = client.send(message)
-    status_code = int(getattr(response, "status_code", 0) or 0)
-    if status_code not in (200, 202):
-        body = getattr(response, "body", b"") or b""
-        detail = body.decode("utf-8", errors="replace")[:200]
-        raise SmtpSendError(
-            f"SendGrid API returned status {status_code}. {detail}".strip(),
-            recipient=to_addr,
+    try:
+        message = Mail(
+            from_email=from_email,
+            to_emails=to_email,
+            subject=subject,
+            plain_text_content=text_body,
+            html_content=html_body,
         )
-    logger.info("SendGrid send ok to=%s status=%d", to_addr, status_code)
+        client = SendGridAPIClient(sendgrid_key)
+        response = client.send(message)
+        logger.error("SENDGRID: status code: %s", response.status_code)
+        logger.error("SENDGRID: response body: %s", response.body)
+
+        status_code = int(getattr(response, "status_code", 0) or 0)
+        if status_code not in (200, 202):
+            body = getattr(response, "body", b"") or b""
+            detail = body.decode("utf-8", errors="replace")[:200]
+            raise SmtpSendError(
+                f"SendGrid API returned status {status_code}. {detail}".strip(),
+                recipient=to_email,
+            )
+        logger.error("SENDGRID: send accepted to=%s status=%s", to_email, status_code)
+    except SmtpSendError:
+        raise
+    except Exception as exc:
+        logger.error("SENDGRID: exception: %s", str(exc))
+        raise SmtpSendError(
+            f"SendGrid send failed for {to_email}: {exc.__class__.__name__}.",
+            recipient=to_email,
+        ) from exc
 
 
 def _open_smtp(settings: Settings) -> smtplib.SMTP:
@@ -317,6 +338,13 @@ def send_email(
     html_body: str | None = None,
 ) -> None:
     """Send one email via SendGrid when configured, else SMTP (with SendGrid fallback)."""
+    logger.error(
+        "SENDGRID: send_email called to=%s sendgrid_configured=%s smtp_configured=%s",
+        to_addr,
+        is_sendgrid_configured(settings),
+        is_smtp_configured(settings),
+    )
+
     if not is_email_configured(settings):
         raise SmtpSendError("Email is not configured on the server.", recipient=to_addr)
 
@@ -336,9 +364,10 @@ def send_email(
             return
         except SmtpSendError as exc:
             sendgrid_errors.append(exc)
-            logger.warning(
-                "SendGrid send failed for %s, trying SMTP fallback if configured: %s",
+            logger.error(
+                "SENDGRID: send_email caught failure for %s, smtp_fallback=%s: %s",
                 to_addr,
+                is_smtp_configured(settings),
                 exc,
             )
 
