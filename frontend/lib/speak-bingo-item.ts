@@ -13,9 +13,10 @@ export type SpeakBingoItemOptions = {
   onSpeakingChange?: (speaking: boolean) => void;
 };
 
-let pendingSpeakTimer: number | null = null;
 /** Bumped before each cancel/new speak so prior utterances ignore their onerror. */
 let speakGeneration = 0;
+/** Prevents duplicate whenVoicesReady / speakBingoItem scheduling for the same text. */
+let inFlightNarrationKey: string | null = null;
 
 const BENIGN_SPEECH_ERRORS = new Set(["canceled", "interrupted"]);
 
@@ -43,14 +44,23 @@ export function isFatalSpeechError(error: string | undefined): boolean {
   );
 }
 
+function clearInFlightNarration(key: string) {
+  if (inFlightNarrationKey === key) {
+    inFlightNarrationKey = null;
+  }
+}
+
 function handleUtteranceError(
   event: SpeechSynthesisErrorEvent,
   generation: number,
+  narrationKey: string,
   options?: SpeakBingoItemOptions,
 ): void {
   if (generation !== speakGeneration) {
     return;
   }
+
+  clearInFlightNarration(narrationKey);
 
   const code = event.error;
   if (isBenignSpeechError(code)) {
@@ -71,25 +81,41 @@ export function isSpeechSynthesisAvailable(): boolean {
   return typeof window !== "undefined" && Boolean(window.speechSynthesis);
 }
 
-/** Call synchronously inside a user click handler before any await (Chrome). */
+/**
+ * Call synchronously inside a user click handler before any await (Chrome).
+ * Does not call cancel() — speakBingoItem cancels once immediately before speak().
+ */
 export function prewarmSpeechSynthesisForUserGesture(): void {
   if (!isSpeechSynthesisAvailable()) {
     return;
   }
   const synth = window.speechSynthesis;
   synth.getVoices();
-  synth.cancel();
+  if (synth.paused) {
+    synth.resume();
+  }
 }
 
 export function whenVoicesReady(synth: SpeechSynthesis, speak: () => void): void {
-  if (synth.getVoices().length > 0) {
-    speak();
-    return;
-  }
-  synth.onvoiceschanged = () => {
+  let invoked = false;
+  const invokeOnce = () => {
+    if (invoked) {
+      return;
+    }
+    invoked = true;
     synth.onvoiceschanged = null;
     speak();
   };
+
+  // Drop any stale handler left by a prior narration attempt.
+  synth.onvoiceschanged = null;
+
+  if (synth.getVoices().length > 0) {
+    invokeOnce();
+    return;
+  }
+
+  synth.onvoiceschanged = invokeOnce;
 }
 
 /** Build "{word}. {description}" for SpeechSynthesis. */
@@ -146,15 +172,21 @@ export function speakBingoItem(
     return false;
   }
 
+  if (inFlightNarrationKey === narrationText) {
+    if (!options?.force) {
+      console.log("narration skipped: duplicate in-flight request");
+      return true;
+    }
+    // force=true (Call Next, Replay, Test Voice): supersede in-flight scheduling.
+    speakGeneration += 1;
+    inFlightNarrationKey = null;
+  }
+  inFlightNarrationKey = narrationText;
+
   const rate = options?.rate ?? settings.rate;
   const pitch = options?.pitch ?? settings.pitch;
   const volume = options?.volume ?? settings.volume;
   const voiceName = options?.voiceName ?? settings.voiceName;
-
-  if (pendingSpeakTimer !== null) {
-    window.clearTimeout(pendingSpeakTimer);
-    pendingSpeakTimer = null;
-  }
 
   if (synth.paused) {
     synth.resume();
@@ -163,6 +195,7 @@ export function speakBingoItem(
   const startUtterance = () => {
     speakGeneration += 1;
     const generation = speakGeneration;
+    // Single cancel for this speak — never call cancel() after speak().
     synth.cancel();
 
     const utterance = new SpeechSynthesisUtterance(narrationText);
@@ -191,11 +224,12 @@ export function speakBingoItem(
       if (generation !== speakGeneration) {
         return;
       }
+      clearInFlightNarration(narrationText);
       console.log("speech ended");
       options?.onSpeakingChange?.(false);
     };
     utterance.onerror = (event) => {
-      handleUtteranceError(event, generation, options);
+      handleUtteranceError(event, generation, narrationText, options);
     };
 
     synth.speak(utterance);
@@ -221,11 +255,10 @@ export function speakNarrationText(
 
 export function cancelBingoSpeech(): void {
   speakGeneration += 1;
-  if (pendingSpeakTimer !== null) {
-    window.clearTimeout(pendingSpeakTimer);
-    pendingSpeakTimer = null;
-  }
+  inFlightNarrationKey = null;
   if (isSpeechSynthesisAvailable()) {
-    window.speechSynthesis.cancel();
+    const synth = window.speechSynthesis;
+    synth.onvoiceschanged = null;
+    synth.cancel();
   }
 }

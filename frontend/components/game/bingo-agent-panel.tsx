@@ -79,7 +79,6 @@ export function BingoAgentPanel({
       return;
     }
     prewarmSpeechSynthesisForUserGesture();
-    speech.cancel();
     if (gameId.trim()) {
       // Pass the already-loaded profile to skip a redundant profile fetch
       // (which would push audio.play() further from the user gesture).

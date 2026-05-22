@@ -3,7 +3,10 @@
 import { BingoCallerVoice } from "@/components/host/bingo-caller-voice";
 import { useLiveGameSession } from "@/hooks/useLiveGameSession";
 import { useSpeechSynthesis } from "@/hooks/useSpeechSynthesis";
-import { NARRATION_UNAVAILABLE_MESSAGE } from "@/lib/speak-bingo-item";
+import {
+  NARRATION_UNAVAILABLE_MESSAGE,
+  prewarmSpeechSynthesisForUserGesture,
+} from "@/lib/speak-bingo-item";
 
 const SAMPLE_PHRASE =
   "Welcome to Bingo. I will call each word with a short fun fact.";
@@ -13,7 +16,7 @@ export function HostVoiceSettings() {
   const { gameId: liveGameId, hostPin: liveHostPin } = useLiveGameSession();
 
   function handleTestVoice() {
-    speech.cancel();
+    prewarmSpeechSynthesisForUserGesture();
     speech.speak(SAMPLE_PHRASE, { force: true });
   }
 
