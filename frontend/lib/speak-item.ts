@@ -9,13 +9,21 @@ import {
   speakNarrationText,
 } from "@/lib/speak-bingo-item";
 import type { CalledItem } from "@/types/gameplay";
+import type { HostVoiceProfilePublic } from "@/types/host-voice";
 
 async function playHostClonedVoiceAudio(
   gameId: string,
   hostPin: string,
   text: string,
+  audioElement?: HTMLAudioElement | null,
+  cachedProfile?: HostVoiceProfilePublic | null,
 ): Promise<boolean> {
-  const profile = await getHostVoiceProfile(gameId, hostPin);
+  // Use the already-loaded profile from component state when available.
+  // Re-fetching it here adds a round-trip and pushes audio.play() further
+  // from the user gesture, which Chrome blocks on HTTPS pages.
+  const profile =
+    cachedProfile ?? (await getHostVoiceProfile(gameId, hostPin));
+
   if (
     profile.voice_mode !== "HOST_VOICE" ||
     !profile.active ||
@@ -29,7 +37,19 @@ async function playHostClonedVoiceAudio(
     return false;
   }
 
-  const audio = new Audio(resolveVoiceAudioUrl(data.audio_url));
+  const resolvedUrl = resolveVoiceAudioUrl(data.audio_url);
+
+  // A DOM-resident <audio> element can be .play()'d after async gaps without
+  // triggering Chrome's autoplay block. new Audio() created after awaits is
+  // blocked on HTTPS pages in production once the user gesture is gone.
+  if (audioElement) {
+    audioElement.src = resolvedUrl;
+    audioElement.load();
+    await audioElement.play();
+    return true;
+  }
+
+  const audio = new Audio(resolvedUrl);
   await audio.play();
   return true;
 }
@@ -68,6 +88,8 @@ export async function speakCalledItem(
   item: CalledItem,
   gameId: string,
   hostPin: string,
+  audioElement?: HTMLAudioElement | null,
+  hostVoiceProfile?: HostVoiceProfilePublic | null,
 ): Promise<void> {
   const trimmedGameId = gameId.trim();
   if (!trimmedGameId) {
@@ -84,6 +106,8 @@ export async function speakCalledItem(
       trimmedGameId,
       hostPin.trim(),
       text,
+      audioElement,
+      hostVoiceProfile,
     );
     if (usedClonedVoice) {
       return;

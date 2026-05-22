@@ -4,6 +4,7 @@ import {
   FormEvent,
   useCallback,
   useEffect,
+  useRef,
   useState,
   startTransition,
 } from "react";
@@ -64,6 +65,10 @@ function formatSocketStatus(status: string) {
 
 export function GameplayControls() {
   const speech = useSpeechSynthesis();
+  // Persistent DOM audio element for ElevenLabs playback.
+  // A pre-rendered element can be .play()'d after async gaps; new Audio()
+  // is blocked by Chrome's autoplay policy on HTTPS once the gesture is gone.
+  const audioRef = useRef<HTMLAudioElement>(null);
   const [gameId, setGameId] = useState("");
   const [hostPin, setHostPin] = useState("");
   const [game, setGame] = useState<Game | null>(null);
@@ -398,7 +403,7 @@ export function GameplayControls() {
       console.log("Call next item success");
       setCalledItems((currentItems) => mergeCalledItems(currentItems, item));
       setNarrationWarning(null);
-      void speakCalledItem(item, gameId.trim(), hostPin.trim());
+      void speakCalledItem(item, gameId.trim(), hostPin.trim(), audioRef.current, hostVoiceProfile);
       void refreshHostVoiceProfile();
     } catch (caughtError) {
       setError(readCaughtError(caughtError, "Unable to call next item."));
@@ -512,6 +517,9 @@ export function GameplayControls() {
 
   return (
     <>
+      {/* Hidden audio element for ElevenLabs cloned-voice playback.
+          A pre-rendered element avoids Chrome's autoplay block on HTTPS. */}
+      <audio ref={audioRef} preload="auto" className="hidden" />
       {hostBingoWinNotice ? (
         <HostBingoWinBanner
           notice={hostBingoWinNotice}

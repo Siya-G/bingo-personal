@@ -7,7 +7,7 @@ serving — only internal services may read ``sample_audio_path`` from the DB.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, UploadFile, status
+from fastapi import APIRouter, Depends, File, Request, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.database.connection import get_db
@@ -100,6 +100,7 @@ def delete_host_voice_profile(
 def post_host_voice_speak(
     game_id: int,
     payload: HostVoiceSpeakRequest,
+    request: Request,
     db: Session = Depends(get_db),
 ) -> HostVoiceSpeakResponse:
     """Synthesize narration via ElevenLabs cloned voice, or return demo fallback (no auth required — players need this too)."""
@@ -113,12 +114,23 @@ def post_host_voice_speak(
     if not voice_id:
         return HostVoiceSpeakResponse(audio_url=None, demo_mode=True)
 
-    audio_url = synthesize_and_cache(
+    relative_url = synthesize_and_cache(
         game_id=game_id,
         text=payload.text,
         voice_id=voice_id,
     )
-    if audio_url is None:
+    if relative_url is None:
         return HostVoiceSpeakResponse(audio_url=None, demo_mode=True)
+
+    # Return an absolute URL so browsers on HTTPS (Vercel) can load the audio
+    # without a mixed-content block. Railway (and most production proxies)
+    # terminate TLS at the edge and forward to uvicorn over plain HTTP, so
+    # request.base_url is http:// even though the browser used https://.
+    # X-Forwarded-Proto carries the original scheme; honour it here.
+    base = str(request.base_url).rstrip("/")
+    forwarded_proto = request.headers.get("x-forwarded-proto", "")
+    if forwarded_proto == "https" and base.startswith("http://"):
+        base = "https://" + base[len("http://"):]
+    audio_url = f"{base}{relative_url}"
 
     return HostVoiceSpeakResponse(audio_url=audio_url, demo_mode=False)

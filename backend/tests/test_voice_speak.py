@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -105,10 +107,14 @@ def test_voice_speak_generates_cached_mp3(
     body = speak.json()
     assert body["demo_mode"] is False
     assert body["audio_url"] is not None
-    assert body["audio_url"].startswith("/voice/audio/")
+    # Endpoint now returns an absolute URL (relative paths caused mixed-content
+    # blocks when the Vercel frontend is HTTPS and the Railway backend returns http://).
+    assert "/voice/audio/" in body["audio_url"]
     assert body["audio_url"].endswith(".mp3")
 
-    audio = client.get(body["audio_url"])
+    # TestClient operates at http://testserver — extract the path for the GET.
+    audio_path = urlparse(body["audio_url"]).path
+    audio = client.get(audio_path)
     assert audio.status_code == 200
     assert audio.headers["content-type"] == "audio/mpeg"
     assert audio.content.startswith(b"ID3")

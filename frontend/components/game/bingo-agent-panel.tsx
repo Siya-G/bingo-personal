@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { CalledItemsList } from "@/components/game/called-items-list";
 import { useSpeechSynthesis } from "@/hooks/useSpeechSynthesis";
 import { getAiCallerLabel } from "@/lib/narrate-called-item";
@@ -48,6 +48,8 @@ export function BingoAgentPanel({
   hostPin = "",
 }: BingoAgentPanelProps) {
   const speech = useSpeechSynthesis();
+  // Persistent DOM audio element for ElevenLabs replay playback.
+  const audioRef = useRef<HTMLAudioElement>(null);
   const currentItem = items.at(-1) ?? null;
   const previousItems = useMemo(
     () => items.slice(0, -1).reverse(),
@@ -79,7 +81,9 @@ export function BingoAgentPanel({
     prewarmSpeechSynthesisForUserGesture();
     speech.cancel();
     if (gameId.trim()) {
-      void speakCalledItem(currentItem, gameId.trim(), hostPin.trim());
+      // Pass the already-loaded profile to skip a redundant profile fetch
+      // (which would push audio.play() further from the user gesture).
+      void speakCalledItem(currentItem, gameId.trim(), hostPin.trim(), audioRef.current, hostVoiceProfile);
       return;
     }
     speech.speakCalledItem(currentItem, { force: true });
@@ -103,6 +107,8 @@ export function BingoAgentPanel({
 
   if (!compact) {
     return (
+      <>
+      <audio ref={audioRef} preload="auto" className="hidden" />
       <div className="space-y-5 rounded-3xl border border-cyan-300/20 bg-gradient-to-br from-cyan-500/10 to-fuchsia-500/10 p-5 sm:p-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
@@ -152,10 +158,13 @@ export function BingoAgentPanel({
           </button>
         </div>
       </div>
+      </>
     );
   }
 
   return (
+    <>
+    <audio ref={audioRef} preload="auto" className="hidden" />
     <div className="space-y-4 rounded-3xl border border-cyan-300/20 bg-gradient-to-br from-cyan-500/10 to-fuchsia-500/10 p-4 sm:p-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
@@ -319,5 +328,6 @@ export function BingoAgentPanel({
         </div>
       </details>
     </div>
+    </>
   );
 }
