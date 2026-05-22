@@ -8,4 +8,5 @@ aiosqlite
 httpx
 openai>=1.40.0
 elevenlabs>=1.0.0
+sendgrid>=6.11.0
 pytest

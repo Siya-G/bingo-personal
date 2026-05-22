@@ -16,7 +16,7 @@ from app.models import Game, GameInvite
 from app.services.smtp_mailer import (
     SmtpSendError,
     describe_smtp,
-    is_smtp_configured,
+    is_email_configured,
     send_email,
 )
 
@@ -235,16 +235,23 @@ def process_game_invites(
     sent_count = 0
     failed_count = 0
 
-    if is_smtp_configured(settings):
+    if is_email_configured(settings):
         mode = "sent"
-        logger.info(
-            "Dispatching invites via SMTP host=%s port=%s tls=%s ssl=%s recipients=%d",
-            smtp_status.host,
-            smtp_status.port,
-            smtp_status.use_tls,
-            smtp_status.use_ssl,
-            len(rows),
-        )
+        if smtp_status.sendgrid_configured:
+            logger.info(
+                "Dispatching invites via SendGrid API (from=%s) recipients=%d",
+                smtp_status.from_address,
+                len(rows),
+            )
+        else:
+            logger.info(
+                "Dispatching invites via SMTP host=%s port=%s tls=%s ssl=%s recipients=%d",
+                smtp_status.host,
+                smtp_status.port,
+                smtp_status.use_tls,
+                smtp_status.use_ssl,
+                len(rows),
+            )
         for row in rows:
             # Per-recipient try/except: one failure must not block the rest.
             try:
@@ -282,7 +289,7 @@ def process_game_invites(
             game.invites_sent_at = datetime.now(UTC)
     else:
         logger.info(
-            "SMTP not configured — storing %d invites as PREVIEW for game_id=%s",
+            "Email not configured — storing %d invites as PREVIEW for game_id=%s",
             len(rows),
             game.id,
         )
@@ -301,7 +308,7 @@ def process_game_invites(
 
     return {
         "mode": mode,
-        "smtp_configured": smtp_status.configured,
+        "smtp_configured": smtp_status.email_configured,
         "smtp_host": smtp_status.host,
         "sent_count": sent_count,
         "failed_count": failed_count,
