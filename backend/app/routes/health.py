@@ -18,21 +18,15 @@ async def health_check() -> dict[str, str]:
 async def smtp_health() -> dict[str, Any]:
     """Public SMTP status (no secrets) — frontend uses this to show the LIVE badge."""
     status_snapshot = describe_smtp(settings)
-    if status_snapshot.sendgrid_configured:
-        mode = "sendgrid"
-    elif status_snapshot.configured:
-        mode = "smtp"
-    else:
-        mode = "preview"
     return {
-        "configured": status_snapshot.email_configured,
-        "sendgrid_configured": status_snapshot.sendgrid_configured,
+        "configured": status_snapshot.configured,
         "host": status_snapshot.host,
         "port": status_snapshot.port,
         "use_tls": status_snapshot.use_tls,
         "use_ssl": status_snapshot.use_ssl,
         "has_credentials": status_snapshot.has_credentials,
-        "mode": mode,
+        # Mode hint clients display: "smtp" means real send, "preview" means demo only.
+        "mode": "smtp" if status_snapshot.configured else "preview",
     }
 
 

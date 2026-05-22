@@ -24,7 +24,6 @@ for _smtp_var in (
     "SMTP_USERNAME",
     "SMTP_USER",
     "SMTP_PASSWORD",
-    "SENDGRID_API_KEY",
 ):
     os.environ[_smtp_var] = ""
 
